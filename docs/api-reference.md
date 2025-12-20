@@ -143,6 +143,8 @@ Create a new workflow with optional steps.
 - `x_position` (optional, integer)
 - `y_position` (optional, integer)
 - `parent_step_id` (optional, integer)
+- `step_identifier` (optional, string) - User-defined identifier for referencing this step
+- `parent_step_identifier` (optional, string) - References another step's `step_identifier` to set as parent
 - `is_enabled` (optional, boolean, default: true)
 - `timeout` (optional, integer, seconds)
 - `execution_mode` (optional, enum: `sequential`, `parallel`)
@@ -345,7 +347,67 @@ Dispatch Laravel jobs:
 
 ## Workflow Branching
 
-Create branching workflows using `parent_step_id` to establish parent-child relationships between steps.
+Create branching workflows using user-defined identifiers in a single request.
+
+### Single-Request Branching (v1.3.0+)
+
+Use `step_identifier` and `parent_step_identifier` to create complete branching workflows without needing database IDs:
+
+```json
+{
+  "name": "Order Processing",
+  "status": "active",
+  "steps": [
+    {
+      "step_identifier": "check_amount",
+      "name": "Check Order Amount",
+      "type": "condition",
+      "configuration": {},
+      "position": 1
+    },
+    {
+      "step_identifier": "small_order",
+      "parent_step_identifier": "check_amount",
+      "name": "Process Small Order",
+      "type": "action",
+      "configuration": {
+        "action_class": "App\\Actions\\ProcessSmallOrder"
+      },
+      "position": 1,
+      "conditions": {
+        "operator": "and",
+        "rules": [
+          {"field": "order.total", "operator": "<", "value": 100}
+        ]
+      }
+    },
+    {
+      "step_identifier": "large_order",
+      "parent_step_identifier": "check_amount",
+      "name": "Process Large Order",
+      "type": "action",
+      "configuration": {
+        "action_class": "App\\Actions\\ProcessLargeOrder"
+      },
+      "position": 2,
+      "conditions": {
+        "operator": "and",
+        "rules": [
+          {"field": "order.total", "operator": ">=", "value": 100}
+        ]
+      }
+    }
+  ]
+}
+```
+
+The API automatically resolves identifiers to database IDs.
+
+**See**: [Single-Request Branching Guide](single-request-branching.md) for complete examples.
+
+### Multi-Request Branching (Legacy)
+
+Alternatively, create parent steps first, then add children using database IDs:
 
 ### How Branching Works
 

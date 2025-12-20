@@ -58,6 +58,8 @@ class CreateWorkflowRequest extends FormRequest
             'steps.*.x_position' => ['nullable', 'integer'],
             'steps.*.y_position' => ['nullable', 'integer'],
             'steps.*.parent_step_id' => ['nullable', 'integer'],
+            'steps.*.step_identifier' => ['nullable', 'string', 'max:255'],
+            'steps.*.parent_step_identifier' => ['nullable', 'string', 'max:255'],
             'steps.*.is_enabled' => ['nullable', 'boolean'],
             'steps.*.timeout' => ['nullable', 'integer', 'min:1'],
             'steps.*.execution_mode' => ['nullable', 'string', 'in:sequential,parallel'],
@@ -80,7 +82,51 @@ class CreateWorkflowRequest extends FormRequest
             'steps.*.type.required' => 'Each step must have a type.',
             'steps.*.configuration.required' => 'Each step must have a configuration.',
             'steps.*.position.required' => 'Each step must have a position.',
+            'steps.*.step_identifier.max' => 'Step identifier must not exceed 255 characters.',
+            'steps.*.parent_step_identifier.max' => 'Parent step identifier must not exceed 255 characters.',
         ];
+    }
+    
+    /**
+     * Validate that all parent_step_identifier references exist.
+     *
+     * @return void
+     */
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator) {
+            if (! $this->has('steps')) {
+                return;
+            }
+
+            $steps = $this->input('steps', []);
+            $identifiers = [];
+
+            // Collect all step identifiers
+            foreach ($steps as $index => $step) {
+                if (isset($step['step_identifier'])) {
+                    if (in_array($step['step_identifier'], $identifiers)) {
+                        $validator->errors()->add(
+                            "steps.{$index}.step_identifier",
+                            "The step identifier '{$step['step_identifier']}' is duplicated. Each step_identifier must be unique."
+                        );
+                    }
+                    $identifiers[] = $step['step_identifier'];
+                }
+            }
+
+            // Validate parent_step_identifier references
+            foreach ($steps as $index => $step) {
+                if (isset($step['parent_step_identifier']) && $step['parent_step_identifier'] !== null) {
+                    if (! in_array($step['parent_step_identifier'], $identifiers)) {
+                        $validator->errors()->add(
+                            "steps.{$index}.parent_step_identifier",
+                            "The parent_step_identifier '{$step['parent_step_identifier']}' does not reference any existing step_identifier."
+                        );
+                    }
+                }
+            }
+        });
     }
 
     /**

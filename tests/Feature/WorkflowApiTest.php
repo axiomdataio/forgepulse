@@ -276,19 +276,166 @@ it('can create workflow with conditional steps', function () {
     expect($workflow->steps[0]->conditions['operator'])->toBe('and');
 });
 
-it('can create workflow as template', function () {
+it('can create workflow with step identifiers for branching', function () {
     $data = [
-        'name' => 'Template Workflow',
+        'name' => 'Branching Workflow with Identifiers',
         'status' => WorkflowStatus::ACTIVE->value,
-        'is_template' => true,
+        'steps' => [
+            [
+                'step_identifier' => 'check_amount',
+                'name' => 'Check Amount',
+                'type' => StepType::CONDITION->value,
+                'configuration' => [],
+                'position' => 1,
+            ],
+            [
+                'step_identifier' => 'small_order',
+                'parent_step_identifier' => 'check_amount',
+                'name' => 'Process Small Order',
+                'type' => StepType::ACTION->value,
+                'configuration' => ['action_class' => 'App\\Actions\\ProcessSmall'],
+                'position' => 1,
+                'conditions' => [
+                    'operator' => 'and',
+                    'rules' => [
+                        ['field' => 'amount', 'operator' => '<', 'value' => 100],
+                    ],
+                ],
+            ],
+            [
+                'step_identifier' => 'large_order',
+                'parent_step_identifier' => 'check_amount',
+                'name' => 'Process Large Order',
+                'type' => StepType::ACTION->value,
+                'configuration' => ['action_class' => 'App\\Actions\\ProcessLarge'],
+                'position' => 2,
+                'conditions' => [
+                    'operator' => 'and',
+                    'rules' => [
+                        ['field' => 'amount', 'operator' => '>=', 'value' => 100],
+                    ],
+                ],
+            ],
+        ],
     ];
 
     $response = $this->postJson('/api/forgepulse/workflows', $data);
 
-    $response->assertStatus(201)
-        ->assertJson([
-            'data' => [
-                'is_template' => true,
+    $response->assertStatus(201);
+
+    $workflow = Workflow::where('name', 'Branching Workflow with Identifiers')->first();
+    expect($workflow->steps)->toHaveCount(3);
+
+    $checkStep = $workflow->steps()->where('name', 'Check Amount')->first();
+    $smallStep = $workflow->steps()->where('name', 'Process Small Order')->first();
+    $largeStep = $workflow->steps()->where('name', 'Process Large Order')->first();
+
+    expect($checkStep->parent_step_id)->toBeNull();
+    expect($smallStep->parent_step_id)->toBe($checkStep->id);
+    expect($largeStep->parent_step_id)->toBe($checkStep->id);
+});
+
+it('validates duplicate step identifiers', function () {
+    $data = [
+        'name' => 'Invalid Workflow',
+        'status' => WorkflowStatus::ACTIVE->value,
+        'steps' => [
+            [
+                'step_identifier' => 'duplicate',
+                'name' => 'Step 1',
+                'type' => StepType::ACTION->value,
+                'configuration' => [],
+                'position' => 1,
             ],
-        ]);
+            [
+                'step_identifier' => 'duplicate',
+                'name' => 'Step 2',
+                'type' => StepType::ACTION->value,
+                'configuration' => [],
+                'position' => 2,
+            ],
+        ],
+    ];
+
+    $response = $this->postJson('/api/forgepulse/workflows', $data);
+
+    $response->assertStatus(422)
+        ->assertJsonValidationErrors(['steps.1.step_identifier']);
+});
+
+it('validates non-existent parent step identifier', function () {
+    $data = [
+        'name' => 'Invalid Parent Reference',
+        'status' => WorkflowStatus::ACTIVE->value,
+        'steps' => [
+            [
+                'step_identifier' => 'child',
+                'parent_step_identifier' => 'non_existent',
+                'name' => 'Child Step',
+                'type' => StepType::ACTION->value,
+                'configuration' => [],
+                'position' => 1,
+            ],
+        ],
+    ];
+
+    $response = $this->postJson('/api/forgepulse/workflows', $data);
+
+    $response->assertStatus(422)
+        ->assertJsonValidationErrors(['steps.0.parent_step_identifier']);
+});
+
+it('can create nested branching with identifiers', function () {
+    $data = [
+        'name' => 'Nested Branching',
+        'status' => WorkflowStatus::ACTIVE->value,
+        'steps' => [
+            [
+                'step_identifier' => 'root',
+                'name' => 'Root',
+                'type' => StepType::ACTION->value,
+                'configuration' => [],
+                'position' => 1,
+            ],
+            [
+                'step_identifier' => 'branch_a',
+                'parent_step_identifier' => 'root',
+                'name' => 'Branch A',
+                'type' => StepType::ACTION->value,
+                'configuration' => [],
+                'position' => 1,
+            ],
+            [
+                'step_identifier' => 'branch_a_1',
+                'parent_step_identifier' => 'branch_a',
+                'name' => 'Branch A.1',
+                'type' => StepType::ACTION->value,
+                'configuration' => [],
+                'position' => 1,
+            ],
+            [
+                'step_identifier' => 'branch_a_2',
+                'parent_step_identifier' => 'branch_a',
+                'name' => 'Branch A.2',
+                'type' => StepType::ACTION->value,
+                'configuration' => [],
+                'position' => 2,
+            ],
+        ],
+    ];
+
+    $response = $this->postJson('/api/forgepulse/workflows', $data);
+
+    $response->assertStatus(201);
+
+    $workflow = Workflow::where('name', 'Nested Branching')->first();
+    
+    $root = $workflow->steps()->where('name', 'Root')->first();
+    $branchA = $workflow->steps()->where('name', 'Branch A')->first();
+    $branchA1 = $workflow->steps()->where('name', 'Branch A.1')->first();
+    $branchA2 = $workflow->steps()->where('name', 'Branch A.2')->first();
+
+    expect($branchA->parent_step_id)->toBe($root->id);
+    expect($branchA1->parent_step_id)->toBe($branchA->id);
+    expect($branchA2->parent_step_id)->toBe($branchA->id);
 });

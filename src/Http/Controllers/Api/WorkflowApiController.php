@@ -62,8 +62,14 @@ class WorkflowApiController extends Controller
 
             // Create steps if provided
             if ($request->has('steps') && is_array($request->input('steps'))) {
-                foreach ($request->input('steps') as $stepData) {
-                    $workflow->steps()->create([
+                $steps = $request->input('steps');
+                
+                // Build identifier to ID mapping
+                $identifierMap = [];
+                
+                // First pass: Create all steps with null parent_step_id
+                foreach ($steps as $stepData) {
+                    $step = $workflow->steps()->create([
                         'name' => $stepData['name'],
                         'description' => $stepData['description'] ?? null,
                         'type' => $stepData['type'],
@@ -78,6 +84,26 @@ class WorkflowApiController extends Controller
                         'execution_mode' => $stepData['execution_mode'] ?? 'sequential',
                         'parallel_group' => $stepData['parallel_group'] ?? null,
                     ]);
+                    
+                    // Map identifier to actual database ID
+                    if (isset($stepData['step_identifier'])) {
+                        $identifierMap[$stepData['step_identifier']] = $step->id;
+                    }
+                }
+                
+                // Second pass: Update parent_step_id based on parent_step_identifier
+                foreach ($steps as $index => $stepData) {
+                    if (isset($stepData['parent_step_identifier'])) {
+                        $parentId = $identifierMap[$stepData['parent_step_identifier']] ?? null;
+                        
+                        if ($parentId) {
+                            // Get the step we just created (by index)
+                            $createdSteps = $workflow->steps()->get();
+                            if (isset($createdSteps[$index])) {
+                                $createdSteps[$index]->update(['parent_step_id' => $parentId]);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -122,7 +148,12 @@ class WorkflowApiController extends Controller
 
             // Update steps if provided
             if ($request->has('steps') && is_array($request->input('steps'))) {
-                foreach ($request->input('steps') as $stepData) {
+                $steps = $request->input('steps');
+                $identifierMap = [];
+                $createdSteps = [];
+                
+                // First pass: Create/update steps and build identifier map
+                foreach ($steps as $stepData) {
                     if (isset($stepData['id'])) {
                         // Update existing step
                         $step = $workflow->steps()->find($stepData['id']);
@@ -142,10 +173,15 @@ class WorkflowApiController extends Controller
                                 'execution_mode' => $stepData['execution_mode'] ?? $step->execution_mode,
                                 'parallel_group' => $stepData['parallel_group'] ?? $step->parallel_group,
                             ]);
+                            
+                            if (isset($stepData['step_identifier'])) {
+                                $identifierMap[$stepData['step_identifier']] = $step->id;
+                            }
+                            $createdSteps[] = $step;
                         }
                     } else {
                         // Create new step
-                        $workflow->steps()->create([
+                        $step = $workflow->steps()->create([
                             'name' => $stepData['name'],
                             'description' => $stepData['description'] ?? null,
                             'type' => $stepData['type'],
@@ -160,6 +196,21 @@ class WorkflowApiController extends Controller
                             'execution_mode' => $stepData['execution_mode'] ?? 'sequential',
                             'parallel_group' => $stepData['parallel_group'] ?? null,
                         ]);
+                        
+                        if (isset($stepData['step_identifier'])) {
+                            $identifierMap[$stepData['step_identifier']] = $step->id;
+                        }
+                        $createdSteps[] = $step;
+                    }
+                }
+                
+                // Second pass: Resolve parent_step_identifier to parent_step_id
+                foreach ($steps as $index => $stepData) {
+                    if (isset($stepData['parent_step_identifier']) && isset($createdSteps[$index])) {
+                        $parentId = $identifierMap[$stepData['parent_step_identifier']] ?? null;
+                        if ($parentId) {
+                            $createdSteps[$index]->update(['parent_step_id' => $parentId]);
+                        }
                     }
                 }
             }
