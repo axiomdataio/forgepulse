@@ -43,6 +43,174 @@ final readonly class WorkflowEngine
     }
 
     /**
+     * Execute a workflow synchronously (all steps in one process).
+     *
+     * This mode is faster for workflows with fast steps and no delays,
+     * but provides no fault tolerance or resume capability.
+     *
+     * @param  WorkflowExecution  $execution  The workflow execution
+     *
+     * @throws \Exception
+     */
+    public function executeSync(WorkflowExecution $execution): void
+    {
+        try {
+            $execution->markAsStarted();
+
+            $this->logExecution($execution, 'Workflow started (sync mode)');
+
+            $workflow = $execution->workflow;
+            $context = $execution->context?->getArrayCopy() ?? [];
+
+            // Get all steps ordered by position
+            $steps = $this->getAllStepsOrdered($workflow);
+
+            // Execute all steps sequentially in same process
+            foreach ($steps as $step) {
+                // Check if execution is paused
+                $freshExecution = $execution->fresh();
+                if ($freshExecution && $freshExecution->isPaused()) {
+                    $this->logExecution($execution, 'Workflow paused by user (sync mode)');
+
+                    return;
+                }
+
+                // Execute step and update context
+                $context = $this->executeStepSync($execution, $step, $context);
+            }
+
+            $execution->markAsCompleted($context);
+
+            if (config('forgepulse.events.workflow_completed', true)) {
+                event(new WorkflowCompleted($execution));
+            }
+
+            $this->logExecution($execution, 'Workflow completed successfully (sync mode)');
+        } catch (\Exception $e) {
+            $execution->markAsFailed($e->getMessage());
+
+            if (config('forgepulse.events.workflow_failed', true)) {
+                event(new WorkflowFailed($execution, $e->getMessage()));
+            }
+
+            $this->logExecution($execution, 'Workflow failed (sync mode): '.$e->getMessage(), 'error');
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Execute a single step synchronously and return updated context.
+     *
+     * @param  WorkflowExecution  $execution  The workflow execution
+     * @param  WorkflowStep  $step  The step to execute
+     * @param  array<string, mixed>  $context  Current execution context
+     * @return array<string, mixed> Updated context
+     *
+     * @throws \Exception
+     */
+    protected function executeStepSync(WorkflowExecution $execution, WorkflowStep $step, array $context): array
+    {
+        // Update current step
+        $execution->update(['current_step_id' => $step->id]);
+
+        // Create execution log
+        $log = WorkflowExecutionLog::create([
+            'workflow_execution_id' => $execution->id,
+            'workflow_step_id' => $step->id,
+            'status' => LogStatus::PENDING,
+        ]);
+
+        try {
+            // Check if step should be executed based on conditions
+            if ($step->hasConditions() && ! $step->evaluateConditions($context)) {
+                $log->markAsSkipped();
+                $this->logExecution($execution, "Step '{$step->name}' skipped due to conditions");
+                $this->markStepCompleted($execution, $step->id);
+
+                return $context;
+            }
+
+            $log->markAsStarted($context);
+
+            // Execute the step
+            $output = $this->stepExecutor->execute($step, $context);
+
+            // Merge output into context
+            $context = array_merge($context, $output);
+
+            // Update execution context
+            $execution->update(['context' => $context]);
+
+            $log->markAsCompleted($output);
+
+            if (config('forgepulse.events.step_executed', true)) {
+                event(new StepExecuted($step, $log));
+            }
+
+            $this->logExecution($execution, "Step '{$step->name}' executed successfully");
+
+            // Mark step as completed
+            $this->markStepCompleted($execution, $step->id);
+
+            return $context;
+        } catch (\AlizHarb\ForgePulse\Exceptions\StepTimeoutException $e) {
+            $log->markAsFailed($e->getMessage());
+
+            $this->logExecution(
+                $execution,
+                "Step '{$step->name}' timed out: ".$e->getMessage(),
+                'error'
+            );
+
+            throw $e;
+        } catch (\Exception $e) {
+            $log->markAsFailed($e->getMessage());
+
+            $this->logExecution(
+                $execution,
+                "Step '{$step->name}' failed: ".$e->getMessage(),
+                'error'
+            );
+
+            throw $e;
+        }
+    }
+
+    /**
+     * Get all steps in execution order (respecting parent-child relationships).
+     *
+     * @param  \AlizHarb\ForgePulse\Models\Workflow  $workflow  The workflow
+     * @return \Illuminate\Support\Collection<int, WorkflowStep>
+     */
+    protected function getAllStepsOrdered($workflow): \Illuminate\Support\Collection
+    {
+        $allSteps = $workflow->steps()->enabled()->orderBy('position')->get();
+        $orderedSteps = collect();
+        $processed = [];
+
+        // Recursive function to add steps in order
+        $addStepsInOrder = function ($parentId = null) use ($allSteps, &$orderedSteps, &$processed, &$addStepsInOrder) {
+            $steps = $allSteps->where('parent_step_id', $parentId)->sortBy('position');
+
+            foreach ($steps as $step) {
+                if (! in_array($step->id, $processed)) {
+                    $orderedSteps->push($step);
+                    $processed[] = $step->id;
+
+                    // Recursively add children
+                    $addStepsInOrder($step->id);
+                }
+            }
+        };
+
+        // Start with root steps (no parent)
+        $addStepsInOrder(null);
+
+        return $orderedSteps;
+    }
+
+    /**
      * Execute a single workflow step.
      *
      * @param  WorkflowExecution  $execution  The workflow execution

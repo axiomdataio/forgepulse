@@ -225,3 +225,124 @@ it('completes workflow when no more steps', function () {
         ->and($execution->completed_at)->not->toBeNull();
 });
 
+it('executes workflow synchronously in one process', function () {
+    $workflow = Workflow::factory()->create();
+
+    $step1 = WorkflowStep::factory()->create([
+        'workflow_id' => $workflow->id,
+        'position' => 1,
+        'type' => 'delay',
+        'configuration' => ['seconds' => 0],
+    ]);
+
+    $step2 = WorkflowStep::factory()->create([
+        'workflow_id' => $workflow->id,
+        'position' => 2,
+        'parent_step_id' => $step1->id,
+        'type' => 'delay',
+        'configuration' => ['seconds' => 0],
+    ]);
+
+    $execution = WorkflowExecution::create([
+        'workflow_id' => $workflow->id,
+        'status' => 'pending',
+        'context' => [],
+    ]);
+
+    $engine = app(WorkflowEngine::class);
+    $engine->executeSync($execution);
+
+    $execution->refresh();
+
+    expect($execution->status->value)->toBe('completed')
+        ->and($execution->completed_at)->not->toBeNull()
+        ->and($execution->logs)->toHaveCount(2);
+});
+
+it('auto-detects sync mode for fast workflows', function () {
+    $workflow = Workflow::factory()->create([
+        'timeout' => 60,  // Fast workflow
+    ]);
+
+    $workflow->steps()->create([
+        'type' => 'delay',
+        'position' => 1,
+        'timeout' => 30,
+        'configuration' => ['seconds' => 0],
+    ]);
+
+    expect($workflow->shouldExecuteSync())->toBeTrue();
+});
+
+it('auto-detects async mode for workflows with delays', function () {
+    $workflow = Workflow::factory()->create();
+
+    $workflow->steps()->create([
+        'type' => 'delay',
+        'position' => 1,
+        'configuration' => ['seconds' => 60],  // Has delay
+    ]);
+
+    expect($workflow->shouldExecuteSync())->toBeFalse();
+});
+
+it('auto-detects async mode for long-running workflows', function () {
+    $workflow = Workflow::factory()->create([
+        'timeout' => 600,  // 10 minutes - too long for sync
+    ]);
+
+    $workflow->steps()->create([
+        'type' => 'action',
+        'position' => 1,
+        'configuration' => ['action_class' => 'TestAction'],
+    ]);
+
+    expect($workflow->shouldExecuteSync())->toBeFalse();
+});
+
+it('auto-detects async mode for critical workflows', function () {
+    $workflow = Workflow::factory()->create([
+        'configuration' => ['critical' => true],
+    ]);
+
+    $workflow->steps()->create([
+        'type' => 'action',
+        'position' => 1,
+        'configuration' => ['action_class' => 'TestAction'],
+    ]);
+
+    expect($workflow->shouldExecuteSync())->toBeFalse();
+});
+
+it('executes in sync mode when explicitly specified', function () {
+    $workflow = Workflow::factory()->create();
+
+    $workflow->steps()->create([
+        'type' => 'delay',
+        'position' => 1,
+        'configuration' => ['seconds' => 0],
+    ]);
+
+    $execution = $workflow->execute([], 'sync');
+
+    expect($execution->status->value)->toBe('completed');
+});
+
+it('executes in async mode when explicitly specified', function () {
+    Queue::fake();
+
+    $workflow = Workflow::factory()->create();
+
+    $workflow->steps()->create([
+        'type' => 'delay',
+        'position' => 1,
+        'configuration' => ['seconds' => 0],
+    ]);
+
+    $execution = $workflow->execute([], 'async');
+
+    expect($execution->status->value)->toBe('running');
+    Queue::assertPushed(ExecuteStepJob::class);
+});
+
+

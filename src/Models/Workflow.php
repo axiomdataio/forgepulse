@@ -219,14 +219,17 @@ class Workflow extends Model
      * Execute the workflow with the given context.
      *
      * @param  array<string, mixed>  $context  Input data for the workflow
-     * @param  bool|null  $async  Whether to execute asynchronously (null = use config default)
+     * @param  string|null  $mode  Execution mode: 'sync', 'async', or null for auto-detect
      * @return WorkflowExecution The created execution instance
      *
      * @throws \RuntimeException If workflow cannot be executed
      */
-    public function execute(array $context = [], ?bool $async = null): WorkflowExecution
+    public function execute(array $context = [], ?string $mode = null): WorkflowExecution
     {
-        $async ??= config('forgepulse.execution.async_by_default', true);
+        // Auto-detect best execution mode if not specified
+        if ($mode === null) {
+            $mode = $this->shouldExecuteSync() ? 'sync' : 'async';
+        }
 
         $execution = $this->executions()->create([
             'user_id' => auth()->id(),
@@ -236,10 +239,74 @@ class Workflow extends Model
 
         event(new WorkflowStarted($execution));
 
-        // Always use the new step-per-job architecture
-        app(\AlizHarb\ForgePulse\Services\WorkflowEngine::class)->start($execution);
+        $engine = app(\AlizHarb\ForgePulse\Services\WorkflowEngine::class);
+
+        if ($mode === 'sync') {
+            // Fast synchronous execution (no queue overhead)
+            $engine->executeSync($execution);
+        } else {
+            // Fault-tolerant async execution (step-per-job)
+            $engine->start($execution);
+        }
 
         return $execution;
+    }
+
+    /**
+     * Determine if this workflow should execute synchronously.
+     *
+     * Analyzes workflow characteristics to decide optimal execution mode.
+     * Returns true if workflow is suitable for fast synchronous execution.
+     *
+     * @return bool True if workflow should execute synchronously
+     */
+    public function shouldExecuteSync(): bool
+    {
+        // Load steps if not already loaded
+        if (! $this->relationLoaded('steps')) {
+            $this->load('steps');
+        }
+
+        // Check if workflow has any delay steps
+        if ($this->steps->contains('type', \AlizHarb\ForgePulse\Enums\StepType::DELAY)) {
+            return false;  // Delays require async execution
+        }
+
+        // Check if any step has timeout > 5 minutes (too long for sync)
+        $maxStepTimeout = $this->steps->max('timeout') ?? 0;
+        if ($maxStepTimeout > 300) {
+            return false;  // Long-running steps should be async
+        }
+
+        // Check if workflow-level timeout is > 5 minutes
+        if ($this->timeout && $this->timeout > 300) {
+            return false;
+        }
+
+        // Check configuration flag for forcing async
+        if (($this->configuration['force_async'] ?? false) === true) {
+            return false;  // Explicitly configured for async
+        }
+
+        // Check if workflow is marked as critical (needs fault tolerance)
+        if (($this->configuration['critical'] ?? false) === true) {
+            return false;  // Critical workflows should use async for resume capability
+        }
+
+        // Estimate total duration (conservative: use workflow timeout or sum of step timeouts)
+        $estimatedDuration = $this->timeout ?? $this->steps->sum('timeout') ?? 300;
+
+        if ($estimatedDuration > 600) {
+            return false;  // Total estimated time > 10 minutes
+        }
+
+        // Check if workflow has many steps (> 20 might indicate complexity)
+        if ($this->steps->count() > 20) {
+            return false;  // Complex workflows should use async
+        }
+
+        // Safe for synchronous execution!
+        return true;
     }
 
     /**
