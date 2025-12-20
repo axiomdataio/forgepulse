@@ -24,10 +24,12 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  *
  * @property int $id Primary key
  * @property int $workflow_id Workflow being executed
+ * @property int|null $current_step_id Currently executing step
  * @property int|null $user_id User who initiated the execution
  * @property ExecutionStatus $status Current execution status
  * @property \ArrayObject<string, mixed>|null $context Input context data for execution
  * @property \ArrayObject<string, mixed>|null $output Final output data from execution
+ * @property array|null $completed_step_ids Array of completed step IDs
  * @property string|null $error_message Error message if execution failed
  * @property int $retry_count Number of retry attempts
  * @property \Illuminate\Support\Carbon|null $started_at Execution start time
@@ -40,6 +42,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property \Illuminate\Support\Carbon $updated_at Last update timestamp
  * @property-read int|null $duration Execution duration in seconds (computed)
  * @property-read Workflow $workflow
+ * @property-read WorkflowStep|null $currentStep
  * @property-read \Illuminate\Database\Eloquent\Model|null $user
  * @property-read \Illuminate\Database\Eloquent\Collection<int, WorkflowExecutionLog> $logs
  *
@@ -62,10 +65,12 @@ class WorkflowExecution extends Model
      */
     protected $fillable = [
         'workflow_id',
+        'current_step_id',
         'user_id',
         'status',
         'context',
         'output',
+        'completed_step_ids',
         'error_message',
         'retry_count',
         'started_at',
@@ -87,6 +92,7 @@ class WorkflowExecution extends Model
             'status' => ExecutionStatus::class,
             'context' => AsArrayObject::class,
             'output' => AsArrayObject::class,
+            'completed_step_ids' => 'array',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
             'paused_at' => 'datetime',
@@ -103,6 +109,16 @@ class WorkflowExecution extends Model
     public function workflow(): BelongsTo
     {
         return $this->belongsTo(Workflow::class);
+    }
+
+    /**
+     * Get the currently executing step.
+     *
+     * @return BelongsTo<WorkflowStep, $this>
+     */
+    public function currentStep(): BelongsTo
+    {
+        return $this->belongsTo(WorkflowStep::class, 'current_step_id');
     }
 
     /**
@@ -303,5 +319,30 @@ class WorkflowExecution extends Model
     public function isPaused(): bool
     {
         return $this->paused_at !== null;
+    }
+
+    /**
+     * Resume a paused or failed execution from the last completed step.
+     */
+    public function resumeExecution(): void
+    {
+        if ($this->status === ExecutionStatus::FAILED) {
+            // Retry the failed step
+            $this->update([
+                'status' => ExecutionStatus::RUNNING,
+                'error_message' => null,
+            ]);
+
+            if ($this->current_step_id) {
+                \AlizHarb\ForgePulse\Jobs\ExecuteStepJob::dispatch($this->id, $this->current_step_id);
+            } else {
+                // No current step, start from beginning
+                app(\AlizHarb\ForgePulse\Services\WorkflowEngine::class)->start($this);
+            }
+        } elseif ($this->isPaused()) {
+            // Resume from where it was paused
+            $this->resume();
+            app(\AlizHarb\ForgePulse\Services\WorkflowEngine::class)->advance($this);
+        }
     }
 }

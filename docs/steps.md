@@ -8,20 +8,64 @@ ForgePulse supports 7 different step types:
 
 ### Action Step
 
-Execute custom PHP code or call a class method.
+Execute custom PHP code or call services, jobs, and actions.
+
+**v2.0+ supports multiple patterns:**
 
 ```php
+// Call a service method
 $workflow->steps()->create([
     'name' => 'Process User Data',
     'type' => StepType::ACTION,
     'position' => 1,
     'configuration' => [
-        'class' => \App\Actions\ProcessUserData::class,
-        'method' => 'handle',
+        'class' => \App\Services\UserService::class,
+        'method' => 'processUser',  // Specify method name
         'parameters' => ['user_id' => '{{user_id}}'],
     ],
 ]);
+
+// Use invokable class (auto-detects __invoke)
+$workflow->steps()->create([
+    'name' => 'Process Order',
+    'type' => StepType::ACTION,
+    'configuration' => [
+        'class' => \App\Actions\ProcessOrder::class,
+        'parameters' => ['order_id' => '{{order_id}}'],
+    ],
+]);
+
+// Call job synchronously
+$workflow->steps()->create([
+    'name' => 'Generate Report',
+    'type' => StepType::ACTION,
+    'configuration' => [
+        'class' => \App\Jobs\GenerateReport::class,
+        'mode' => 'sync',  // Calls handle() directly
+        'parameters' => ['report_id' => '{{report_id}}'],
+    ],
+]);
+
+// Dispatch job asynchronously (fire and forget)
+$workflow->steps()->create([
+    'name' => 'Send Email',
+    'type' => StepType::ACTION,
+    'configuration' => [
+        'class' => \App\Jobs\SendEmailJob::class,
+        'mode' => 'dispatch',  // Queues the job
+        'queue' => 'emails',
+        'delay' => 60,  // Optional delay in seconds
+        'parameters' => ['email' => '{{user_email}}'],
+    ],
+]);
 ```
+
+**Method Detection (auto-detects in this order):**
+1. Explicitly specified `method`
+2. `__invoke()` - Invokable classes
+3. `handle()` - Laravel Jobs, Spatie Actions
+4. `execute()` - Backward compatibility
+5. `asAction()` - Spatie Laravel Actions
 
 ### Condition Step
 
@@ -42,7 +86,9 @@ $workflow->steps()->create([
 
 ### Delay Step
 
-Wait for a specified duration before continuing.
+Wait for a specified duration before continuing. 
+
+**v2.0+:** Delays use job scheduling instead of blocking workers.
 
 ```php
 $workflow->steps()->create([
@@ -54,6 +100,12 @@ $workflow->steps()->create([
     ],
 ]);
 ```
+
+**How it works:**
+- Step completes immediately
+- Next step(s) are scheduled with the specified delay
+- Queue worker is freed immediately (no blocking!)
+- Perfect for Laravel Vapor and Lambda functions
 
 ### Notification Step
 

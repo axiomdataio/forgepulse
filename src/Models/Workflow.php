@@ -232,11 +232,8 @@ class Workflow extends Model
 
         event(new WorkflowStarted($execution));
 
-        if ($async) {
-            \AlizHarb\ForgePulse\Jobs\ExecuteWorkflowJob::dispatch($execution);
-        } else {
-            app(\AlizHarb\ForgePulse\Services\WorkflowEngine::class)->execute($execution);
-        }
+        // Always use the new step-per-job architecture
+        app(\AlizHarb\ForgePulse\Services\WorkflowEngine::class)->start($execution);
 
         return $execution;
     }
