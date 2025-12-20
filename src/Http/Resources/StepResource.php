@@ -29,6 +29,7 @@ class StepResource extends JsonResource
             'position' => $this->position,
             'is_enabled' => $this->is_enabled,
             'timeout' => $this->timeout,
+            'max_retries' => $this->max_retries,
             'execution_mode' => $this->execution_mode ?? 'sequential',
             'parallel_group' => $this->parallel_group,
             'configuration' => $this->configuration->getArrayCopy(),

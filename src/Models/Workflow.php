@@ -27,6 +27,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string $name Workflow name
  * @property string|null $description Workflow description
  * @property WorkflowStatus $status Current workflow status (draft, active, inactive, archived)
+ * @property int|null $timeout Default timeout for all steps in seconds
+ * @property int|null $max_retries Default max retry attempts for failed steps
  * @property \ArrayObject<string, mixed>|null $configuration JSON configuration data
  * @property bool $is_template Whether this workflow is a template
  * @property int|string|null $user_id Owner user ID
@@ -64,6 +66,8 @@ class Workflow extends Model
         'name',
         'description',
         'status',
+        'timeout',
+        'max_retries',
         'configuration',
         'is_template',
         'user_id',

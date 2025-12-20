@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AlizHarb\ForgePulse\Jobs;
 
+use AlizHarb\ForgePulse\Models\Workflow;
 use AlizHarb\ForgePulse\Models\WorkflowExecution;
 use AlizHarb\ForgePulse\Models\WorkflowStep;
 use AlizHarb\ForgePulse\Services\WorkflowEngine;
@@ -43,6 +44,8 @@ final class ExecuteStepJob implements ShouldBeUnique, ShouldQueue
     /**
      * Create a new job instance.
      *
+     * Priority: Step → Workflow → Global Config
+     *
      * @param  int  $executionId  The workflow execution ID
      * @param  int  $stepId  The step to execute
      */
@@ -50,8 +53,20 @@ final class ExecuteStepJob implements ShouldBeUnique, ShouldQueue
         public readonly int $executionId,
         public readonly int $stepId
     ) {
-        $this->tries = config('forgepulse.execution.max_retries', 3);
-        $this->timeout = config('forgepulse.execution.step_timeout', 300); // 5 minutes default
+        // Load step and workflow for configuration
+        $step = WorkflowStep::find($this->stepId);
+        $execution = WorkflowExecution::find($this->executionId);
+        $workflow = $execution?->workflow;
+
+        // Priority: Step → Workflow → Global Config
+        $this->timeout = $step?->timeout
+            ?? $workflow?->timeout
+            ?? config('forgepulse.execution.step_timeout', 300);
+
+        $this->tries = $step?->max_retries
+            ?? $workflow?->max_retries
+            ?? config('forgepulse.execution.max_retries', 3);
+
         $this->onQueue(config('forgepulse.execution.queue', 'default'));
     }
 

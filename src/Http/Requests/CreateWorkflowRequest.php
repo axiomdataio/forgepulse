@@ -41,6 +41,8 @@ class CreateWorkflowRequest extends FormRequest
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:1000'],
             'status' => ['required', Rule::enum(WorkflowStatus::class)],
+            'timeout' => ['nullable', 'integer', 'min:1', 'max:3600'],
+            'max_retries' => ['nullable', 'integer', 'min:0', 'max:10'],
             'configuration' => ['nullable', 'array'],
             'is_template' => ['nullable', 'boolean'],
             'user_id' => ['nullable', 'integer'],
@@ -61,7 +63,8 @@ class CreateWorkflowRequest extends FormRequest
             'steps.*.step_identifier' => ['nullable', 'string', 'max:255'],
             'steps.*.parent_step_identifier' => ['nullable', 'string', 'max:255'],
             'steps.*.is_enabled' => ['nullable', 'boolean'],
-            'steps.*.timeout' => ['nullable', 'integer', 'min:1'],
+            'steps.*.timeout' => ['nullable', 'integer', 'min:1', 'max:3600'],
+            'steps.*.max_retries' => ['nullable', 'integer', 'min:0', 'max:10'],
             'steps.*.execution_mode' => ['nullable', 'string', 'in:sequential,parallel'],
             'steps.*.parallel_group' => ['nullable', 'string', 'max:255'],
         ];
