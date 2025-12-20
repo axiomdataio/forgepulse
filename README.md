@@ -42,6 +42,16 @@
 - Laravel 12
 - Livewire 4
 
+## ☁️ Laravel Vapor Deployment
+
+ForgePulse is **Vapor-ready** with minimal configuration required. See the [complete Vapor deployment guide](VAPOR_README.md) for details.
+
+**Quick Start for Vapor:**
+- [30-Minute Quick Start](VAPOR_QUICK_START.md)
+- [Full Deployment Guide](VAPOR_DEPLOYMENT_GUIDE.md)
+- [Configuration Comparison](VAPOR_CONFIG_COMPARISON.md)
+- [Troubleshooting Guide](VAPOR_TROUBLESHOOTING.md)
+
 ## 📦 Installation
 
 Install the package via Composer:
