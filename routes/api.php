@@ -19,7 +19,10 @@ Route::prefix('api/forgepulse')
     ->group(function () {
         // Workflow routes
         Route::get('/workflows', [WorkflowApiController::class, 'index'])->name('forgepulse.api.workflows.index');
+        Route::post('/workflows', [WorkflowApiController::class, 'store'])->name('forgepulse.api.workflows.store');
         Route::get('/workflows/{workflow}', [WorkflowApiController::class, 'show'])->name('forgepulse.api.workflows.show');
+        Route::put('/workflows/{workflow}', [WorkflowApiController::class, 'update'])->name('forgepulse.api.workflows.update');
+        Route::delete('/workflows/{workflow}', [WorkflowApiController::class, 'destroy'])->name('forgepulse.api.workflows.destroy');
 
         // Execution routes
         Route::get('/executions', [ExecutionApiController::class, 'index'])->name('forgepulse.api.executions.index');

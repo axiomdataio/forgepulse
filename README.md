@@ -352,26 +352,44 @@ $execution = $workflow->execute([
 
 ## 🌐 REST API (v1.1.0)
 
-ForgePulse provides a full REST API for mobile monitoring and integrations:
+ForgePulse provides a full REST API for workflow management, mobile monitoring and integrations:
 
 ```bash
-# List workflows
-GET /api/forgepulse/workflows
+# Workflow Management
+GET /api/forgepulse/workflows              # List workflows
+GET /api/forgepulse/workflows/{id}         # Get workflow details
+POST /api/forgepulse/workflows             # Create workflow
+PUT /api/forgepulse/workflows/{id}         # Update workflow
+DELETE /api/forgepulse/workflows/{id}      # Delete workflow
 
-# Get workflow details
-GET /api/forgepulse/workflows/{id}
+# Execution Monitoring
+GET /api/forgepulse/executions             # List executions
+GET /api/forgepulse/executions/{id}        # Get execution details
+POST /api/forgepulse/executions/{id}/pause # Pause execution
+POST /api/forgepulse/executions/{id}/resume # Resume execution
+```
 
-# List executions
-GET /api/forgepulse/executions
+### Create Workflow Example
 
-# Get execution details
-GET /api/forgepulse/executions/{id}
-
-# Pause execution
-POST /api/forgepulse/executions/{id}/pause
-
-# Resume execution
-POST /api/forgepulse/executions/{id}/resume
+```bash
+curl -X POST https://your-app.com/api/forgepulse/workflows \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "User Onboarding",
+    "description": "Automated user onboarding",
+    "status": "active",
+    "steps": [
+      {
+        "name": "Send Welcome Email",
+        "type": "notification",
+        "configuration": {
+          "notification_class": "App\\Notifications\\WelcomeEmail"
+        },
+        "position": 1
+      }
+    ]
+  }'
 ```
 
 Configure API settings in `config/forgepulse.php`:
