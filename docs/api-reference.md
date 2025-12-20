@@ -343,6 +343,216 @@ Dispatch Laravel jobs:
 }
 ```
 
+## Workflow Branching
+
+Create branching workflows using `parent_step_id` to establish parent-child relationships between steps.
+
+### How Branching Works
+
+1. **Parent-Child Hierarchy**: Steps can have a `parent_step_id` to create tree structures
+2. **Conditional Execution**: Each child step can have `conditions` to determine if it runs
+3. **Position Ordering**: Steps with the same parent are ordered by `position`
+
+### Simple If/Else Branch
+
+```json
+{
+  "name": "User Onboarding with Branching",
+  "status": "active",
+  "steps": [
+    {
+      "name": "Check User Role",
+      "type": "condition",
+      "position": 1,
+      "parent_step_id": null
+    }
+  ]
+}
+```
+
+After creating the workflow and getting the step ID, add child branches:
+
+```json
+{
+  "steps": [
+    {
+      "name": "Premium User Path",
+      "type": "notification",
+      "position": 1,
+      "parent_step_id": 1,
+      "conditions": {
+        "operator": "and",
+        "rules": [
+          {"field": "user.role", "operator": "==", "value": "premium"}
+        ]
+      }
+    },
+    {
+      "name": "Free User Path",
+      "type": "notification",
+      "position": 2,
+      "parent_step_id": 1,
+      "conditions": {
+        "operator": "and",
+        "rules": [
+          {"field": "user.role", "operator": "==", "value": "free"}
+        ]
+      }
+    }
+  ]
+}
+```
+
+### Multi-Branch Decision
+
+```json
+{
+  "steps": [
+    {
+      "name": "Validate Order",
+      "type": "action",
+      "position": 1,
+      "parent_step_id": null
+    }
+  ]
+}
+```
+
+Add multiple conditional branches:
+
+```json
+{
+  "steps": [
+    {
+      "name": "Small Order Processing",
+      "position": 1,
+      "parent_step_id": 1,
+      "conditions": {
+        "rules": [{"field": "order.total", "operator": "<", "value": 100}]
+      }
+    },
+    {
+      "name": "Medium Order Processing",
+      "position": 2,
+      "parent_step_id": 1,
+      "conditions": {
+        "rules": [
+          {"field": "order.total", "operator": ">=", "value": 100},
+          {"field": "order.total", "operator": "<=", "value": 1000}
+        ]
+      }
+    },
+    {
+      "name": "Large Order Processing",
+      "position": 3,
+      "parent_step_id": 1,
+      "conditions": {
+        "rules": [{"field": "order.total", "operator": ">", "value": 1000}]
+      }
+    }
+  ]
+}
+```
+
+### Nested Branching
+
+Create branches within branches by setting `parent_step_id` to a child step:
+
+```json
+{
+  "steps": [
+    {
+      "name": "Premium Processing",
+      "position": 1,
+      "parent_step_id": 1,
+      "conditions": {
+        "rules": [{"field": "user.type", "operator": "==", "value": "premium"}]
+      }
+    }
+  ]
+}
+```
+
+Then add nested branches (assuming the Premium step has ID 5):
+
+```json
+{
+  "steps": [
+    {
+      "name": "Annual Subscription",
+      "position": 1,
+      "parent_step_id": 5,
+      "conditions": {
+        "rules": [{"field": "plan", "operator": "==", "value": "annual"}]
+      }
+    },
+    {
+      "name": "Monthly Subscription",
+      "position": 2,
+      "parent_step_id": 5,
+      "conditions": {
+        "rules": [{"field": "plan", "operator": "==", "value": "monthly"}]
+      }
+    }
+  ]
+}
+```
+
+### Convergence (Branches Rejoin)
+
+To make branches converge back to a common path, create a new root-level step:
+
+```json
+{
+  "steps": [
+    {
+      "name": "Branch A",
+      "position": 1,
+      "parent_step_id": 1,
+      "conditions": {...}
+    },
+    {
+      "name": "Branch B",
+      "position": 2,
+      "parent_step_id": 1,
+      "conditions": {...}
+    },
+    {
+      "name": "Convergence Point",
+      "position": 2,
+      "parent_step_id": null
+    }
+  ]
+}
+```
+
+The convergence point runs after any branch completes.
+
+### Parallel Execution (No Branching)
+
+All child steps execute when `execution_mode` is set to `parallel`:
+
+```json
+{
+  "steps": [
+    {
+      "name": "Send Email",
+      "position": 1,
+      "parent_step_id": 1,
+      "execution_mode": "parallel",
+      "parallel_group": "notifications"
+    },
+    {
+      "name": "Send SMS",
+      "position": 2,
+      "parent_step_id": 1,
+      "execution_mode": "parallel",
+      "parallel_group": "notifications"
+    }
+  ]
+}
+```
+
 ## Conditional Logic
 
 Steps can include conditional logic using the `conditions` field:
