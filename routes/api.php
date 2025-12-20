@@ -1,5 +1,6 @@
 <?php
 
+use AlizHarb\ForgePulse\Http\Controllers\Api\ActionSchemaController;
 use AlizHarb\ForgePulse\Http\Controllers\Api\ExecutionApiController;
 use AlizHarb\ForgePulse\Http\Controllers\Api\WorkflowApiController;
 use Illuminate\Support\Facades\Route;
@@ -29,4 +30,9 @@ Route::prefix('api/forgepulse')
         Route::get('/executions/{execution}', [ExecutionApiController::class, 'show'])->name('forgepulse.api.executions.show');
         Route::post('/executions/{execution}/pause', [ExecutionApiController::class, 'pause'])->name('forgepulse.api.executions.pause');
         Route::post('/executions/{execution}/resume', [ExecutionApiController::class, 'resume'])->name('forgepulse.api.executions.resume');
+
+        // Action schema routes
+        Route::get('/actions/schema', [ActionSchemaController::class, 'show'])->name('forgepulse.api.actions.schema');
+        Route::post('/actions/schema/bulk', [ActionSchemaController::class, 'bulk'])->name('forgepulse.api.actions.schema.bulk');
     });
+
