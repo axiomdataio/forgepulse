@@ -1,6 +1,7 @@
 <?php
 
 use AlizHarb\ForgePulse\Http\Controllers\Api\ExecutionApiController;
+use AlizHarb\ForgePulse\Http\Controllers\Api\WebhookTriggerController;
 use AlizHarb\ForgePulse\Http\Controllers\Api\WorkflowApiController;
 use Illuminate\Support\Facades\Route;
 
@@ -30,3 +31,7 @@ Route::prefix('api/forgepulse')
         Route::post('/executions/{execution}/pause', [ExecutionApiController::class, 'pause'])->name('forgepulse.api.executions.pause');
         Route::post('/executions/{execution}/resume', [ExecutionApiController::class, 'resume'])->name('forgepulse.api.executions.resume');
     });
+
+// Webhook trigger routes (no auth required, uses token validation)
+Route::post('/api/forgepulse/webhook/{workflow}/{token}', [WebhookTriggerController::class, 'handle'])
+    ->name('forgepulse.api.webhook.trigger');

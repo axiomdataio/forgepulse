@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AlizHarb\ForgePulse\Models;
 
+use AlizHarb\ForgePulse\Enums\TriggerType;
 use AlizHarb\ForgePulse\Enums\WorkflowStatus;
 use AlizHarb\ForgePulse\Events\WorkflowStarted;
 use Illuminate\Database\Eloquent\Builder;
@@ -28,6 +29,9 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string|null $description Workflow description
  * @property WorkflowStatus $status Current workflow status (draft, active, inactive, archived)
  * @property \ArrayObject<string, mixed>|null $configuration JSON configuration data
+ * @property \ArrayObject<string, mixed>|null $trigger_config JSON trigger configuration data
+ * @property TriggerType|null $trigger_type Trigger type (event, schedule, webhook, model, manual)
+ * @property bool $auto_trigger_enabled Whether automatic triggering is enabled
  * @property bool $is_template Whether this workflow is a template
  * @property int|string|null $user_id Owner user ID
  * @property int|null $team_id Owner team ID
@@ -65,6 +69,9 @@ class Workflow extends Model
         'description',
         'status',
         'configuration',
+        'trigger_config',
+        'trigger_type',
+        'auto_trigger_enabled',
         'is_template',
         'user_id',
         'team_id',
@@ -81,6 +88,9 @@ class Workflow extends Model
         return [
             'status' => WorkflowStatus::class,
             'configuration' => AsArrayObject::class,
+            'trigger_config' => AsArrayObject::class,
+            'trigger_type' => TriggerType::class,
+            'auto_trigger_enabled' => 'boolean',
             'is_template' => 'boolean',
         ];
     }
@@ -374,5 +384,73 @@ class Workflow extends Model
         }
 
         return $version->restore();
+    }
+
+    /**
+     * Register the workflow's trigger.
+     *
+     * @return bool True if registration successful
+     */
+    public function registerTrigger(): bool
+    {
+        if (! $this->auto_trigger_enabled || ! $this->trigger_type) {
+            return false;
+        }
+
+        return app(\AlizHarb\ForgePulse\Services\TriggerManager::class)->register($this);
+    }
+
+    /**
+     * Unregister the workflow's trigger.
+     *
+     * @return bool True if unregistration successful
+     */
+    public function unregisterTrigger(): bool
+    {
+        if (! $this->trigger_type) {
+            return false;
+        }
+
+        return app(\AlizHarb\ForgePulse\Services\TriggerManager::class)->unregister($this);
+    }
+
+    /**
+     * Get the webhook URL for this workflow.
+     *
+     * @return string|null Webhook URL if trigger type is webhook
+     */
+    public function getWebhookUrl(): ?string
+    {
+        if ($this->trigger_type !== TriggerType::WEBHOOK) {
+            return null;
+        }
+
+        $config = $this->trigger_config?->getArrayCopy() ?? [];
+        $token = $config['token'] ?? null;
+
+        if (! $token) {
+            return null;
+        }
+
+        return route('forgepulse.api.webhook.trigger', [
+            'workflow' => $this->id,
+            'token' => $token,
+        ]);
+    }
+
+    /**
+     * Get the webhook token for this workflow.
+     *
+     * @return string|null Webhook token if trigger type is webhook
+     */
+    public function getWebhookToken(): ?string
+    {
+        if ($this->trigger_type !== TriggerType::WEBHOOK) {
+            return null;
+        }
+
+        $config = $this->trigger_config?->getArrayCopy() ?? [];
+
+        return $config['token'] ?? null;
     }
 }

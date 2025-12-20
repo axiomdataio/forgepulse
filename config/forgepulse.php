@@ -280,4 +280,30 @@ return [
         // API rate limiting
         'rate_limit' => env('FORGEPULSE_API_RATE_LIMIT', '60,1'),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Workflow Triggers
+    |--------------------------------------------------------------------------
+    |
+    | Configure automatic workflow trigger functionality.
+    |
+    */
+
+    'triggers' => [
+        // Enable automatic workflow triggers
+        'enabled' => env('FORGEPULSE_TRIGGERS_ENABLED', true),
+
+        // Register triggers on application boot
+        'auto_register' => env('FORGEPULSE_TRIGGERS_AUTO_REGISTER', true),
+
+        // Available trigger types
+        'types' => [
+            'manual' => \AlizHarb\ForgePulse\Services\TriggerHandlers\ManualTriggerHandler::class,
+            'event' => \AlizHarb\ForgePulse\Services\TriggerHandlers\EventTriggerHandler::class,
+            'schedule' => \AlizHarb\ForgePulse\Services\TriggerHandlers\ScheduleTriggerHandler::class,
+            'webhook' => \AlizHarb\ForgePulse\Services\TriggerHandlers\WebhookTriggerHandler::class,
+            'model' => \AlizHarb\ForgePulse\Services\TriggerHandlers\ModelTriggerHandler::class,
+        ],
+    ],
 ];
