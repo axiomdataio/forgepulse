@@ -289,10 +289,11 @@ $workflow->steps()->create([
 
 ```php
 // BAD - Lambda max is 900 seconds (15 minutes)
-'timeout' => 1800,  // ❌ Too long for Lambda
+'timeout' => 1800,  // ❌ Way too long for Lambda
 
-// GOOD - Keep steps under Lambda limit
+// GOOD - Keep steps under 10 minutes
 'timeout' => 300,   // ✅ 5 minutes (safe)
+'timeout' => 600,   // ✅ 10 minutes (max allowed)
 ```
 
 ### Workflow-Level for Lambda
@@ -410,7 +411,7 @@ $failedSteps = WorkflowExecutionLog::where('status', 'failed')
 
 **Timeout:**
 - Minimum: 1 second
-- Maximum: 3600 seconds (1 hour)
+- Maximum: 600 seconds (10 minutes)
 - Must be integer
 
 **Max Retries:**

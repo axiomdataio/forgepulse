@@ -176,9 +176,9 @@ $workflow->steps()->create([
 
 ## Validation
 
-**Timeout:**
-- Min: 1 second
-- Max: 3600 seconds (1 hour)
+**Validation:**
+- Minimum: 1 second
+- Maximum: 600 seconds (10 minutes)
 - Integer only
 
 **Max Retries:**
