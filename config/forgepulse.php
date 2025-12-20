@@ -12,7 +12,12 @@ return [
     */
 
     'execution' => [
-        // Maximum execution time for a workflow (in seconds)
+        // Maximum execution time for a single workflow step (in seconds)
+        // Note: Individual steps now run as separate jobs for fault tolerance
+        'step_timeout' => env('FORGEPULSE_STEP_TIMEOUT', 300),
+
+        // DEPRECATED: Workflow-level timeout (v2.0+ uses step-per-job architecture)
+        // Kept for backward compatibility but no longer enforced
         'timeout' => env('FORGEPULSE_TIMEOUT', 300),
 
         // Maximum retry attempts for failed steps
@@ -24,11 +29,12 @@ return [
         // Queue connection for workflow jobs
         'queue_connection' => env('FORGEPULSE_QUEUE_CONNECTION', 'default'),
 
-        // Queue name for workflow jobs
-        'queue_name' => env('FORGEPULSE_QUEUE_NAME', 'workflows'),
+        // Queue name for workflow step jobs
+        'queue' => env('FORGEPULSE_QUEUE_NAME', 'workflows'),
 
-        // Enable async execution by default
-        'async_by_default' => env('FORGEPULSE_ASYNC', true),
+        // DEPRECATED: async_by_default (v2.0+ always uses step-per-job)
+        // All workflows now execute as queued jobs per step
+        'async_by_default' => true,
     ],
 
     /*

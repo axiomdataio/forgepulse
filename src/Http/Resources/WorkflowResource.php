@@ -26,6 +26,8 @@ class WorkflowResource extends JsonResource
             'name' => $this->name,
             'description' => $this->description,
             'status' => $this->status->value,
+            'timeout' => $this->timeout,
+            'max_retries' => $this->max_retries,
             'is_template' => $this->is_template,
             'version' => $this->version,
             'steps_count' => $this->whenCounted('steps'),
