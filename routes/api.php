@@ -34,5 +34,7 @@ Route::prefix('api/forgepulse')
         // Action schema routes
         Route::get('/actions/schema', [ActionSchemaController::class, 'show'])->name('forgepulse.api.actions.schema');
         Route::post('/actions/schema/bulk', [ActionSchemaController::class, 'bulk'])->name('forgepulse.api.actions.schema.bulk');
+        Route::post('/actions/openapi', [ActionSchemaController::class, 'openapi'])->name('forgepulse.api.actions.openapi');
+        Route::post('/actions/validate', [ActionSchemaController::class, 'validate'])->name('forgepulse.api.actions.validate');
     });
 

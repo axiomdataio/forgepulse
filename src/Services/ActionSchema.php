@@ -74,8 +74,10 @@ class ActionSchema
     /**
      * Normalize schema from ProvidesSchema interface.
      *
+     * Converts OpenAPI 3.0 format to internal format.
+     *
      * @param  string  $class  The action class name
-     * @param  array<string, mixed>  $schema  Raw schema from action
+     * @param  array<string, mixed>  $schema  OpenAPI schema from action
      * @return array<string, mixed> Normalized schema
      */
     protected function normalizeSchema(string $class, array $schema): array
@@ -87,52 +89,134 @@ class ActionSchema
             $method = $this->detectMethod($reflection);
         }
 
-        // Normalize input fields to parameters format
+        // Convert OpenAPI parameters to internal format
         $parameters = [];
-        foreach ($schema['input'] ?? [] as $name => $config) {
-            // Support shorthand: 'field' => 'type'
-            if (is_string($config)) {
-                $config = ['type' => $config];
-            }
-
+        foreach ($schema['parameters'] ?? [] as $name => $param) {
             $parameters[] = [
                 'name' => $name,
-                'type' => $config['type'] ?? 'mixed',
-                'required' => $config['required'] ?? true,
-                'default' => $config['default'] ?? null,
-                'description' => $config['description'] ?? null,
-                'example' => $config['example'] ?? null,
-                'validation' => $config['validation'] ?? null,
-                'source' => $config['source'] ?? 'config',
+                'type' => $this->normalizeType($param['type'] ?? 'string'),
+                'required' => $param['required'] ?? true,
+                'default' => $param['default'] ?? null,
+                'description' => $param['description'] ?? null,
+                'example' => $param['example'] ?? null,
+                'validation' => $this->extractValidationRules($param),
+                'source' => $param['x-source'] ?? 'config',
+                'format' => $param['format'] ?? null,
+                'enum' => $param['enum'] ?? null,
             ];
         }
 
-        // Normalize output fields
+        // Extract output schema from OpenAPI response
         $outputFields = [];
-        foreach ($schema['output'] ?? [] as $name => $config) {
-            // Support shorthand: 'field' => 'type'
-            if (is_string($config)) {
-                $config = ['type' => $config];
+        $response200 = $schema['responses']['200'] ?? $schema['responses']['default'] ?? null;
+        if ($response200) {
+            $responseSchema = $response200['content']['application/json']['schema'] ?? null;
+            if ($responseSchema) {
+                $outputFields = $this->extractOutputFields($responseSchema);
             }
-
-            $outputFields[$name] = [
-                'type' => $config['type'] ?? 'mixed',
-                'description' => $config['description'] ?? null,
-            ];
         }
 
         return [
             'class' => $class,
             'method' => $method,
-            'name' => $schema['name'] ?? $this->generateName($class, $method),
+            'name' => $schema['summary'] ?? $this->generateName($class, $method),
             'description' => $schema['description'] ?? null,
-            'category' => $schema['category'] ?? 'general',
+            'category' => $schema['x-category'] ?? 'general',
             'tags' => $schema['tags'] ?? [],
-            'recommended_timeout' => $schema['timeout'] ?? null,
+            'recommended_timeout' => $schema['x-timeout'] ?? null,
+            'operation_id' => $schema['operationId'] ?? null,
             'parameters' => $parameters,
             'return_type' => ['type' => 'array', 'description' => null],
             'output_fields' => $outputFields,
+            'openapi_schema' => $schema, // Keep original for export
         ];
+    }
+
+    /**
+     * Normalize OpenAPI type to PHP type.
+     *
+     * @param  string  $type  OpenAPI type
+     * @return string PHP type
+     */
+    protected function normalizeType(string $type): string
+    {
+        return match ($type) {
+            'integer' => 'int',
+            'number' => 'float',
+            'boolean' => 'bool',
+            'string', 'array', 'object' => $type,
+            default => 'mixed',
+        };
+    }
+
+    /**
+     * Extract validation rules from OpenAPI parameter schema.
+     *
+     * @param  array<string, mixed>  $param  Parameter schema
+     * @return array<string, mixed> Validation rules
+     */
+    protected function extractValidationRules(array $param): array
+    {
+        $rules = [];
+
+        // Numeric constraints
+        if (isset($param['minimum'])) {
+            $rules['min'] = $param['minimum'];
+        }
+        if (isset($param['maximum'])) {
+            $rules['max'] = $param['maximum'];
+        }
+
+        // String constraints
+        if (isset($param['minLength'])) {
+            $rules['min_length'] = $param['minLength'];
+        }
+        if (isset($param['maxLength'])) {
+            $rules['max_length'] = $param['maxLength'];
+        }
+        if (isset($param['pattern'])) {
+            $rules['pattern'] = $param['pattern'];
+        }
+
+        // Array constraints
+        if (isset($param['minItems'])) {
+            $rules['min_items'] = $param['minItems'];
+        }
+        if (isset($param['maxItems'])) {
+            $rules['max_items'] = $param['maxItems'];
+        }
+
+        // Enum
+        if (isset($param['enum'])) {
+            $rules['enum'] = $param['enum'];
+        }
+
+        return $rules;
+    }
+
+    /**
+     * Extract output fields from OpenAPI response schema.
+     *
+     * @param  array<string, mixed>  $schema  Response schema
+     * @return array<string, mixed> Output fields
+     */
+    protected function extractOutputFields(array $schema): array
+    {
+        $fields = [];
+
+        if ($schema['type'] === 'object' && isset($schema['properties'])) {
+            foreach ($schema['properties'] as $name => $prop) {
+                $fields[$name] = [
+                    'type' => $this->normalizeType($prop['type'] ?? 'mixed'),
+                    'description' => $prop['description'] ?? null,
+                    'format' => $prop['format'] ?? null,
+                    'enum' => $prop['enum'] ?? null,
+                    'example' => $prop['example'] ?? null,
+                ];
+            }
+        }
+
+        return $fields;
     }
 
     /**
@@ -455,5 +539,117 @@ class ActionSchema
         }
 
         return $schemas;
+    }
+
+    /**
+     * Export actions as OpenAPI 3.0 specification.
+     *
+     * @param  array<string>  $classes  Array of action class names
+     * @return array<string, mixed> OpenAPI spec
+     */
+    public function exportAsOpenAPI(array $classes): array
+    {
+        $paths = [];
+
+        foreach ($classes as $class) {
+            try {
+                $schema = $this->getSchema($class);
+
+                // Use original OpenAPI schema if available
+                $operationSchema = $schema['openapi_schema'] ?? $this->convertToOpenAPI($schema);
+
+                $operationId = $schema['operation_id'] ?? class_basename($class);
+                $paths["/actions/{$operationId}"] = [
+                    'post' => $operationSchema,
+                ];
+            } catch (\Exception $e) {
+                continue;
+            }
+        }
+
+        return [
+            'openapi' => '3.0.3',
+            'info' => [
+                'title' => 'ForgePulse Workflow Actions',
+                'version' => '1.0.0',
+                'description' => 'Available actions for workflow orchestration',
+            ],
+            'paths' => $paths,
+        ];
+    }
+
+    /**
+     * Convert internal schema format to OpenAPI format.
+     *
+     * @param  array<string, mixed>  $schema  Internal schema
+     * @return array<string, mixed> OpenAPI operation schema
+     */
+    protected function convertToOpenAPI(array $schema): array
+    {
+        $parameters = [];
+        foreach ($schema['parameters'] as $param) {
+            $paramSchema = [
+                'type' => $param['type'],
+                'description' => $param['description'],
+                'required' => $param['required'],
+            ];
+
+            if ($param['default'] !== null) {
+                $paramSchema['default'] = $param['default'];
+            }
+            if ($param['example'] !== null) {
+                $paramSchema['example'] = $param['example'];
+            }
+            if ($param['format'] !== null) {
+                $paramSchema['format'] = $param['format'];
+            }
+            if ($param['enum'] !== null) {
+                $paramSchema['enum'] = $param['enum'];
+            }
+
+            // Add validation constraints
+            if ($param['validation']) {
+                if (isset($param['validation']['min'])) {
+                    $paramSchema['minimum'] = $param['validation']['min'];
+                }
+                if (isset($param['validation']['max'])) {
+                    $paramSchema['maximum'] = $param['validation']['max'];
+                }
+                if (isset($param['validation']['pattern'])) {
+                    $paramSchema['pattern'] = $param['validation']['pattern'];
+                }
+            }
+
+            $parameters[$param['name']] = $paramSchema;
+        }
+
+        $responseProperties = [];
+        foreach ($schema['output_fields'] as $name => $field) {
+            $responseProperties[$name] = [
+                'type' => $field['type'],
+                'description' => $field['description'],
+            ];
+        }
+
+        return [
+            'summary' => $schema['name'],
+            'description' => $schema['description'],
+            'tags' => $schema['tags'],
+            'operationId' => $schema['operation_id'] ?? class_basename($schema['class']),
+            'parameters' => $parameters,
+            'responses' => [
+                '200' => [
+                    'description' => 'Success',
+                    'content' => [
+                        'application/json' => [
+                            'schema' => [
+                                'type' => 'object',
+                                'properties' => $responseProperties,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
     }
 }
