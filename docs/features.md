@@ -350,7 +350,57 @@ GET /api/forgepulse/workflows
 # Get workflow details
 GET /api/forgepulse/workflows/{id}
 
-# Response example
+# Create a new workflow
+POST /api/forgepulse/workflows
+Content-Type: application/json
+
+{
+  "name": "User Onboarding",
+  "description": "Automated user onboarding process",
+  "status": "active",
+  "steps": [
+    {
+      "name": "Send Welcome Email",
+      "type": "notification",
+      "configuration": {
+        "notification_class": "App\\Notifications\\WelcomeEmail",
+        "recipients": ["{{user_id}}"]
+      },
+      "position": 1
+    },
+    {
+      "name": "Wait 24 Hours",
+      "type": "delay",
+      "configuration": {
+        "seconds": 86400
+      },
+      "position": 2
+    }
+  ]
+}
+
+# Update an existing workflow
+PUT /api/forgepulse/workflows/{id}
+Content-Type: application/json
+
+{
+  "name": "Updated Workflow Name",
+  "status": "active",
+  "steps": [
+    {
+      "id": 1,
+      "name": "Updated Step Name",
+      "type": "notification",
+      "configuration": {...},
+      "position": 1
+    }
+  ]
+}
+
+# Delete a workflow
+DELETE /api/forgepulse/workflows/{id}
+
+# Response example (GET/POST/PUT)
 {
   "id": 1,
   "name": "User Onboarding",
@@ -359,6 +409,11 @@ GET /api/forgepulse/workflows/{id}
   "steps_count": 5,
   "executions_count": 142,
   "created_at": "2025-11-26T12:00:00.000Z"
+}
+
+# Delete response example
+{
+  "message": "Workflow deleted successfully."
 }
 ```
 
@@ -426,6 +481,52 @@ async function fetchWorkflows() {
 
   const data = await response.json();
   return data.data; // Array of workflows
+}
+
+async function createWorkflow(workflowData) {
+  const response = await fetch(
+    "https://your-app.com/api/forgepulse/workflows",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(workflowData),
+    }
+  );
+
+  const data = await response.json();
+  return data.data;
+}
+
+async function updateWorkflow(workflowId, updates) {
+  const response = await fetch(
+    `https://your-app.com/api/forgepulse/workflows/${workflowId}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(updates),
+    }
+  );
+
+  const data = await response.json();
+  return data.data;
+}
+
+async function deleteWorkflow(workflowId) {
+  await fetch(
+    `https://your-app.com/api/forgepulse/workflows/${workflowId}`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
 }
 
 async function pauseExecution(executionId, reason) {
