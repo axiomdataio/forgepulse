@@ -20,6 +20,11 @@ class ActionSchema
     /**
      * Get schema information for an action class and method.
      *
+     * Priority:
+     * 1. Database (allows runtime overrides and external services)
+     * 2. Code-based schema (ProvidesSchema interface)
+     * 3. Reflection (fallback)
+     *
      * @param  string  $class  The action class name
      * @param  string|null  $method  The method name (null for auto-detect)
      * @return array<string, mixed> Schema information
@@ -28,18 +33,24 @@ class ActionSchema
      */
     public function getSchema(string $class, ?string $method = null): array
     {
-        if (! class_exists($class)) {
-            throw new \RuntimeException("Class not found: {$class}");
+        // Priority 1: Check database first
+        $dbSchema = $this->getSchemaFromDatabase($class, $method);
+        if ($dbSchema) {
+            return $dbSchema;
         }
 
-        // Priority 1: Check if class provides its own schema
-        if (method_exists($class, 'schema')) {
+        // Priority 2: Check if class provides its own schema
+        if (class_exists($class) && method_exists($class, 'schema')) {
             $schema = $class::schema();
 
             return $this->normalizeSchema($class, $schema);
         }
 
-        // Priority 2: Use reflection
+        // Priority 3: Use reflection
+        if (! class_exists($class)) {
+            throw new \RuntimeException("Class not found: {$class}");
+        }
+
         $reflection = new ReflectionClass($class);
 
         // Auto-detect method if not provided
@@ -68,7 +79,39 @@ class ActionSchema
             'parameters' => $this->getParametersSchema($methodReflection),
             'return_type' => $this->getReturnTypeSchema($methodReflection),
             'output_fields' => $this->getOutputFields($methodReflection),
+            'source' => 'reflection',
         ];
+    }
+
+    /**
+     * Get schema from database.
+     *
+     * @param  string  $class  The action class name
+     * @param  string|null  $method  The method name
+     * @return array<string, mixed>|null Schema or null if not found
+     */
+    protected function getSchemaFromDatabase(string $class, ?string $method): ?array
+    {
+        $query = \AlizHarb\ForgePulse\Models\ActionSchema::where('action_class', $class)
+            ->where('is_active', true);
+
+        if ($method !== null) {
+            $query->where('method', $method);
+        }
+
+        $model = $query->first();
+
+        if (! $model) {
+            return null;
+        }
+
+        // Convert stored schema to internal format
+        return $this->normalizeSchema($class, $model->schema + [
+            'x-db-id' => $model->id,
+            'x-source' => $model->source,
+            'x-version' => $model->version,
+            'x-is-external' => $model->is_external,
+        ]);
     }
 
     /**
@@ -545,12 +588,14 @@ class ActionSchema
      * Export actions as OpenAPI 3.0 specification.
      *
      * @param  array<string>  $classes  Array of action class names
+     * @param  bool  $includeDbSchemas  Include schemas from database
      * @return array<string, mixed> OpenAPI spec
      */
-    public function exportAsOpenAPI(array $classes): array
+    public function exportAsOpenAPI(array $classes, bool $includeDbSchemas = true): array
     {
         $paths = [];
 
+        // Add class-based actions
         foreach ($classes as $class) {
             try {
                 $schema = $this->getSchema($class);
@@ -564,6 +609,18 @@ class ActionSchema
                 ];
             } catch (\Exception $e) {
                 continue;
+            }
+        }
+
+        // Add database schemas (including external services)
+        if ($includeDbSchemas) {
+            $dbSchemas = \AlizHarb\ForgePulse\Models\ActionSchema::active()->get();
+
+            foreach ($dbSchemas as $model) {
+                $operationId = $model->schema['operationId'] ?? class_basename($model->action_class);
+                $paths["/actions/{$operationId}"] = [
+                    'post' => $model->schema,
+                ];
             }
         }
 
