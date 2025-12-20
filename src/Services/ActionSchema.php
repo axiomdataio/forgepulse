@@ -32,6 +32,14 @@ class ActionSchema
             throw new \RuntimeException("Class not found: {$class}");
         }
 
+        // Priority 1: Check if class provides its own schema
+        if (method_exists($class, 'schema')) {
+            $schema = $class::schema();
+
+            return $this->normalizeSchema($class, $schema);
+        }
+
+        // Priority 2: Use reflection
         $reflection = new ReflectionClass($class);
 
         // Auto-detect method if not provided
@@ -60,6 +68,70 @@ class ActionSchema
             'parameters' => $this->getParametersSchema($methodReflection),
             'return_type' => $this->getReturnTypeSchema($methodReflection),
             'output_fields' => $this->getOutputFields($methodReflection),
+        ];
+    }
+
+    /**
+     * Normalize schema from ProvidesSchema interface.
+     *
+     * @param  string  $class  The action class name
+     * @param  array<string, mixed>  $schema  Raw schema from action
+     * @return array<string, mixed> Normalized schema
+     */
+    protected function normalizeSchema(string $class, array $schema): array
+    {
+        // Auto-detect method if not specified
+        $method = $schema['method'] ?? null;
+        if ($method === null) {
+            $reflection = new ReflectionClass($class);
+            $method = $this->detectMethod($reflection);
+        }
+
+        // Normalize input fields to parameters format
+        $parameters = [];
+        foreach ($schema['input'] ?? [] as $name => $config) {
+            // Support shorthand: 'field' => 'type'
+            if (is_string($config)) {
+                $config = ['type' => $config];
+            }
+
+            $parameters[] = [
+                'name' => $name,
+                'type' => $config['type'] ?? 'mixed',
+                'required' => $config['required'] ?? true,
+                'default' => $config['default'] ?? null,
+                'description' => $config['description'] ?? null,
+                'example' => $config['example'] ?? null,
+                'validation' => $config['validation'] ?? null,
+                'source' => $config['source'] ?? 'config',
+            ];
+        }
+
+        // Normalize output fields
+        $outputFields = [];
+        foreach ($schema['output'] ?? [] as $name => $config) {
+            // Support shorthand: 'field' => 'type'
+            if (is_string($config)) {
+                $config = ['type' => $config];
+            }
+
+            $outputFields[$name] = [
+                'type' => $config['type'] ?? 'mixed',
+                'description' => $config['description'] ?? null,
+            ];
+        }
+
+        return [
+            'class' => $class,
+            'method' => $method,
+            'name' => $schema['name'] ?? $this->generateName($class, $method),
+            'description' => $schema['description'] ?? null,
+            'category' => $schema['category'] ?? 'general',
+            'tags' => $schema['tags'] ?? [],
+            'recommended_timeout' => $schema['timeout'] ?? null,
+            'parameters' => $parameters,
+            'return_type' => ['type' => 'array', 'description' => null],
+            'output_fields' => $outputFields,
         ];
     }
 
