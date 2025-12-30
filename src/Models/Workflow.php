@@ -38,6 +38,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property-read \Illuminate\Database\Eloquent\Collection<int, WorkflowStep> $steps
  * @property-read \Illuminate\Database\Eloquent\Collection<int, WorkflowExecution> $executions
  * @property-read \Illuminate\Database\Eloquent\Collection<int, WorkflowVersion> $versions
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, WorkflowTrigger> $triggers
  * @property-read \Illuminate\Database\Eloquent\Model $user
  * @property-read \Illuminate\Database\Eloquent\Model $team
  *
@@ -145,6 +146,16 @@ class Workflow extends Model
     public function executions(): HasMany
     {
         return $this->hasMany(WorkflowExecution::class);
+    }
+
+    /**
+     * Get the triggers for the workflow.
+     *
+     * @return HasMany<WorkflowTrigger, $this>
+     */
+    public function triggers(): HasMany
+    {
+        return $this->hasMany(WorkflowTrigger::class)->orderBy('priority', 'desc');
     }
 
     /**
