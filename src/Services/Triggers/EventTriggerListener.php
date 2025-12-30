@@ -20,7 +20,7 @@ use Illuminate\Support\Facades\Log;
  */
 final class EventTriggerListener
 {
-    private const CACHE_KEY = 'forgepulse:event_triggers';
+    private const CACHE_KEY_PREFIX = 'forgepulse:event_triggers';
 
     /**
      * Events that have been registered for listening in this request.
@@ -109,7 +109,11 @@ final class EventTriggerListener
      */
     protected function handleEvent(string $eventClass, mixed $event): void
     {
-        $triggers = $this->triggerManager->findEventTriggers($eventClass);
+        // Extract team ID from event for multi-tenancy
+        $eventTeamId = $this->getEventTeamId($event);
+
+        // Find triggers, filtered by team if multi-tenancy is enabled
+        $triggers = $this->findTriggersForEvent($eventClass, $eventTeamId);
 
         if ($triggers->isEmpty()) {
             return;
@@ -118,11 +122,96 @@ final class EventTriggerListener
         $this->log("Event {$eventClass} fired, found {$triggers->count()} trigger(s)");
 
         foreach ($triggers as $trigger) {
+            // Skip if trigger belongs to different tenant
+            if (! $this->triggerMatchesTenant($trigger, $eventTeamId)) {
+                continue;
+            }
+
             // Convert event to array for context
             $eventData = $this->eventToArray($event);
+            $eventData['_team_id'] = $eventTeamId;
 
             $this->triggerManager->fire($trigger, $eventData);
         }
+    }
+
+    /**
+     * Extract team ID from an event for multi-tenancy.
+     * Override or extend this to match your tenancy implementation.
+     */
+    protected function getEventTeamId(mixed $event): ?int
+    {
+        if (! config('forgepulse.teams.enabled', false)) {
+            return null;
+        }
+
+        // Check common patterns for team ID in events
+        if (is_object($event)) {
+            // Direct property
+            if (property_exists($event, 'teamId')) {
+                return $event->teamId;
+            }
+            if (property_exists($event, 'team_id')) {
+                return $event->team_id;
+            }
+
+            // Method
+            if (method_exists($event, 'getTeamId')) {
+                return $event->getTeamId();
+            }
+
+            // Nested in user
+            if (property_exists($event, 'user') && $event->user) {
+                if (method_exists($event->user, 'currentTeam')) {
+                    return $event->user->currentTeam?->id;
+                }
+                if (isset($event->user->team_id)) {
+                    return $event->user->team_id;
+                }
+            }
+
+            // Nested in model
+            if (property_exists($event, 'model') && $event->model) {
+                if (isset($event->model->team_id)) {
+                    return $event->model->team_id;
+                }
+            }
+        }
+
+        // Fallback to current context
+        return \AlizHarb\ForgePulse\Models\WorkflowTrigger::getCurrentTeamId();
+    }
+
+    /**
+     * Find triggers for an event, respecting multi-tenancy.
+     *
+     * @return \Illuminate\Support\Collection<int, \AlizHarb\ForgePulse\Models\WorkflowTrigger>
+     */
+    protected function findTriggersForEvent(string $eventClass, ?int $teamId): \Illuminate\Support\Collection
+    {
+        if (! config('forgepulse.teams.enabled', false)) {
+            return $this->triggerManager->findEventTriggers($eventClass);
+        }
+
+        return $this->triggerManager->findEventTriggers($eventClass, $teamId);
+    }
+
+    /**
+     * Check if a trigger matches the event's tenant.
+     */
+    protected function triggerMatchesTenant(\AlizHarb\ForgePulse\Models\WorkflowTrigger $trigger, ?int $eventTeamId): bool
+    {
+        if (! config('forgepulse.teams.enabled', false)) {
+            return true;
+        }
+
+        // If event has no team, only match triggers with no team
+        if ($eventTeamId === null) {
+            return $trigger->team_id === null;
+        }
+
+        // Match triggers for the same team
+        return $trigger->team_id === $eventTeamId;
     }
 
     /**
@@ -188,21 +277,40 @@ final class EventTriggerListener
         }
 
         $ttl = config('forgepulse.triggers.serverless.cache_ttl', 300);
+        $cacheKey = $this->getCacheKey();
 
         return $this->cache->remember(
-            self::CACHE_KEY,
+            $cacheKey,
             $ttl,
             fn () => $this->getEventClassesFromDatabase()
         );
     }
 
     /**
+     * Get the cache key, optionally scoped by tenant.
+     */
+    protected function getCacheKey(): string
+    {
+        $key = self::CACHE_KEY_PREFIX;
+
+        // For multi-tenant, we cache ALL event classes globally
+        // because we need to register listeners for all tenants
+        // The filtering happens at trigger lookup time
+        return $key.':global';
+    }
+
+    /**
      * Get event classes from database.
+     * Returns ALL event classes across all tenants for listener registration.
      *
      * @return array<string>
      */
     protected function getEventClassesFromDatabase(): array
     {
+        // Note: We get ALL event classes here, not filtered by tenant
+        // This is because we need to register listeners for events
+        // from ALL tenants. The tenant filtering happens when the
+        // event fires and we look up the specific triggers.
         return WorkflowTrigger::query()
             ->where('is_active', true)
             ->where('type', TriggerType::EVENT)
@@ -220,7 +328,7 @@ final class EventTriggerListener
      */
     public static function clearCache(): void
     {
-        cache()->forget(self::CACHE_KEY);
+        cache()->forget(self::CACHE_KEY_PREFIX.':global');
     }
 
     /**

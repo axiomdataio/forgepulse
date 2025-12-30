@@ -289,6 +289,10 @@ return [
     | Configure the workflow trigger system for automatic workflow initiation.
     | Supports event, schedule, webhook, model, and manual trigger types.
     |
+    | Multi-tenancy: When teams.enabled is true, triggers are automatically
+    | scoped to the team that owns the workflow. This ensures tenant isolation
+    | for event, model, and scheduled triggers.
+    |
     */
 
     'triggers' => [
@@ -323,6 +327,11 @@ return [
         'model' => [
             // Auto-register model observers on application boot
             'auto_observe' => env('FORGEPULSE_AUTO_OBSERVE_MODELS', true),
+
+            // Attribute name for team/tenant ID on models (for multi-tenancy)
+            // The observer will look for this attribute on models to determine
+            // which tenant's triggers should fire.
+            'team_attribute' => env('FORGEPULSE_MODEL_TEAM_ATTRIBUTE', 'team_id'),
         ],
 
         // Serverless optimisations (Laravel Vapor, AWS Lambda, etc.)
@@ -332,6 +341,19 @@ return [
 
             // Cache TTL in seconds
             'cache_ttl' => env('FORGEPULSE_TRIGGER_CACHE_TTL', 300),
+        ],
+
+        // Multi-tenancy settings (used when teams.enabled is true)
+        'multitenancy' => [
+            // How to resolve the current team/tenant context.
+            // Options: 'session', 'header', 'user', 'callback'
+            'resolver' => env('FORGEPULSE_TENANT_RESOLVER', 'user'),
+
+            // Header name when resolver is 'header'
+            'header_name' => env('FORGEPULSE_TENANT_HEADER', 'X-Team-ID'),
+
+            // Session key when resolver is 'session'
+            'session_key' => env('FORGEPULSE_TENANT_SESSION_KEY', 'team_id'),
         ],
     ],
 ];

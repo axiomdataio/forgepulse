@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
  *
  * Central service for managing and firing workflow triggers.
  * Handles trigger discovery, condition evaluation, and workflow execution.
+ * Supports multi-tenancy through team-scoped queries.
  *
  * @author Ali Harb <harbzali@gmail.com>
  */
@@ -24,6 +25,44 @@ final readonly class TriggerManager
     public function __construct(
         private ConditionalEvaluator $conditionalEvaluator
     ) {}
+
+    /**
+     * Check if multi-tenancy is enabled.
+     */
+    protected function isMultiTenantEnabled(): bool
+    {
+        return config('forgepulse.teams.enabled', false);
+    }
+
+    /**
+     * Get the current team ID for multi-tenant filtering.
+     */
+    protected function getCurrentTeamId(): ?int
+    {
+        if (! $this->isMultiTenantEnabled()) {
+            return null;
+        }
+
+        return WorkflowTrigger::getCurrentTeamId();
+    }
+
+    /**
+     * Apply team scope to a query if multi-tenancy is enabled.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<WorkflowTrigger>  $query
+     * @param  int|null  $teamId  Optional team ID override
+     * @return \Illuminate\Database\Eloquent\Builder<WorkflowTrigger>
+     */
+    protected function applyTeamScope($query, ?int $teamId = null)
+    {
+        if (! $this->isMultiTenantEnabled()) {
+            return $query;
+        }
+
+        $teamId = $teamId ?? $this->getCurrentTeamId();
+
+        return $query->forTeam($teamId);
+    }
 
     /**
      * Fire a trigger and execute its workflow.
@@ -69,15 +108,20 @@ final readonly class TriggerManager
      * Find triggers for a specific Laravel event.
      *
      * @param  string  $eventClass  Fully qualified event class name
+     * @param  int|null  $teamId  Optional team ID for multi-tenancy (null = use current context)
      * @return Collection<int, WorkflowTrigger>
      */
-    public function findEventTriggers(string $eventClass): Collection
+    public function findEventTriggers(string $eventClass, ?int $teamId = null): Collection
     {
-        return WorkflowTrigger::active()
+        $query = WorkflowTrigger::active()
             ->ofType(TriggerType::EVENT)
             ->withActiveWorkflow()
-            ->orderBy('priority', 'desc')
-            ->get()
+            ->orderBy('priority', 'desc');
+
+        // Apply team scope for multi-tenancy
+        $query = $this->applyTeamScope($query, $teamId);
+
+        return $query->get()
             ->filter(function (WorkflowTrigger $trigger) use ($eventClass) {
                 return ($trigger->configuration['event_class'] ?? '') === $eventClass;
             });
@@ -88,9 +132,38 @@ final readonly class TriggerManager
      *
      * @param  string  $modelClass  Fully qualified model class name
      * @param  string  $event  Model event (created, updated, deleted)
+     * @param  int|null  $teamId  Optional team ID for multi-tenancy (null = use current context)
      * @return Collection<int, WorkflowTrigger>
      */
-    public function findModelTriggers(string $modelClass, string $event): Collection
+    public function findModelTriggers(string $modelClass, string $event, ?int $teamId = null): Collection
+    {
+        $query = WorkflowTrigger::active()
+            ->ofType(TriggerType::MODEL)
+            ->withActiveWorkflow()
+            ->orderBy('priority', 'desc');
+
+        // Apply team scope for multi-tenancy
+        $query = $this->applyTeamScope($query, $teamId);
+
+        return $query->get()
+            ->filter(function (WorkflowTrigger $trigger) use ($modelClass, $event) {
+                $config = $trigger->configuration;
+
+                return ($config['model_class'] ?? '') === $modelClass
+                    && in_array($event, $config['events'] ?? [], true);
+            });
+    }
+
+    /**
+     * Find triggers for a model event across ALL tenants.
+     * Used internally by ModelTriggerObserver which needs to find triggers
+     * for the specific tenant that owns the model.
+     *
+     * @param  string  $modelClass  Fully qualified model class name
+     * @param  string  $event  Model event (created, updated, deleted)
+     * @return Collection<int, WorkflowTrigger>
+     */
+    public function findModelTriggersAllTenants(string $modelClass, string $event): Collection
     {
         return WorkflowTrigger::active()
             ->ofType(TriggerType::MODEL)

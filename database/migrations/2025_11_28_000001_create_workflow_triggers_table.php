@@ -27,11 +27,16 @@ return new class () extends Migration
             $table->string('max_executions_period')->nullable(); // per_minute, per_hour, per_day
             $table->timestamp('last_triggered_at')->nullable();
             $table->unsignedInteger('trigger_count')->default(0);
+
+            // Multi-tenancy support (inherits from workflow but cached for performance)
+            $table->unsignedBigInteger('team_id')->nullable()->index();
+
             $table->timestamps();
 
             // Performance indexes
             $table->index(['workflow_id', 'is_active']);
             $table->index(['type', 'is_active']);
+            $table->index(['team_id', 'type', 'is_active']);
             $table->unique(['workflow_id', 'type', 'name']);
         });
     }

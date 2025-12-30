@@ -126,7 +126,12 @@ final class ModelTriggerObserver
     protected function handleModelEvent(Model $model, string $event): void
     {
         $modelClass = get_class($model);
-        $triggers = $this->triggerManager->findModelTriggers($modelClass, $event);
+
+        // Get model's team ID for multi-tenancy filtering
+        $modelTeamId = $this->getModelTeamId($model);
+
+        // Find triggers - filter by team if model has team context
+        $triggers = $this->findTriggersForModel($modelClass, $event, $modelTeamId);
 
         if ($triggers->isEmpty()) {
             return;
@@ -135,6 +140,11 @@ final class ModelTriggerObserver
         $this->log("Model event {$modelClass}::{$event} fired, found {$triggers->count()} trigger(s)");
 
         foreach ($triggers as $trigger) {
+            // Skip if trigger belongs to different tenant
+            if (! $this->triggerMatchesTenant($trigger, $modelTeamId)) {
+                continue;
+            }
+
             // Check attribute filters
             if (! $this->passesAttributeFilters($model, $event, $trigger)) {
                 $this->log("Trigger '{$trigger->name}' skipped due to attribute filters");
@@ -149,10 +159,72 @@ final class ModelTriggerObserver
                 'event' => $event,
                 'changes' => $event === 'updated' ? $model->getChanges() : [],
                 'original' => $event === 'updated' ? $model->getOriginal() : [],
+                'team_id' => $modelTeamId,
             ];
 
             $this->triggerManager->fire($trigger, $modelData);
         }
+    }
+
+    /**
+     * Get the team ID from a model for multi-tenancy.
+     * Override or extend this to match your tenancy implementation.
+     */
+    protected function getModelTeamId(Model $model): ?int
+    {
+        if (! config('forgepulse.teams.enabled', false)) {
+            return null;
+        }
+
+        // Common patterns for team/tenant ID on models
+        if (method_exists($model, 'getTeamId')) {
+            return $model->getTeamId();
+        }
+
+        if (isset($model->team_id)) {
+            return $model->team_id;
+        }
+
+        if (isset($model->tenant_id)) {
+            return $model->tenant_id;
+        }
+
+        // Fallback to current context
+        return \AlizHarb\ForgePulse\Models\WorkflowTrigger::getCurrentTeamId();
+    }
+
+    /**
+     * Find triggers for a model, respecting multi-tenancy.
+     *
+     * @return \Illuminate\Support\Collection<int, \AlizHarb\ForgePulse\Models\WorkflowTrigger>
+     */
+    protected function findTriggersForModel(string $modelClass, string $event, ?int $teamId): \Illuminate\Support\Collection
+    {
+        if (! config('forgepulse.teams.enabled', false) || $teamId === null) {
+            // Not multi-tenant or no team context - use standard lookup
+            return $this->triggerManager->findModelTriggersAllTenants($modelClass, $event);
+        }
+
+        // Multi-tenant: Find triggers for this specific team
+        return $this->triggerManager->findModelTriggers($modelClass, $event, $teamId);
+    }
+
+    /**
+     * Check if a trigger matches the model's tenant.
+     */
+    protected function triggerMatchesTenant(\AlizHarb\ForgePulse\Models\WorkflowTrigger $trigger, ?int $modelTeamId): bool
+    {
+        if (! config('forgepulse.teams.enabled', false)) {
+            return true;
+        }
+
+        // If model has no team, only match triggers with no team
+        if ($modelTeamId === null) {
+            return $trigger->team_id === null;
+        }
+
+        // Match triggers for the same team
+        return $trigger->team_id === $modelTeamId;
     }
 
     /**
@@ -210,9 +282,10 @@ final class ModelTriggerObserver
         }
 
         $ttl = config('forgepulse.triggers.serverless.cache_ttl', 300);
+        $cacheKey = self::CACHE_KEY.':global';
 
         return $this->cache->remember(
-            self::CACHE_KEY,
+            $cacheKey,
             $ttl,
             fn () => $this->getModelClassesFromDatabase()
         );
@@ -220,11 +293,16 @@ final class ModelTriggerObserver
 
     /**
      * Get model classes from database.
+     * Returns ALL model classes across all tenants for observer registration.
      *
      * @return array<string>
      */
     protected function getModelClassesFromDatabase(): array
     {
+        // Note: We get ALL model classes here, not filtered by tenant
+        // This is because we need to observe models from ALL tenants.
+        // The tenant filtering happens when the model event fires
+        // and we look up the specific triggers.
         return WorkflowTrigger::query()
             ->where('is_active', true)
             ->where('type', TriggerType::MODEL)
@@ -242,7 +320,7 @@ final class ModelTriggerObserver
      */
     public static function clearCache(): void
     {
-        cache()->forget(self::CACHE_KEY);
+        cache()->forget(self::CACHE_KEY.':global');
     }
 
     /**

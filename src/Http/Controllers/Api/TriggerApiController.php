@@ -68,6 +68,11 @@ class TriggerApiController extends Controller
             $validated['configuration']
         );
 
+        // Inherit team_id from workflow for multi-tenancy
+        if (config('forgepulse.teams.enabled', false)) {
+            $validated['team_id'] = $workflow->team_id;
+        }
+
         $trigger = $workflow->triggers()->create($validated);
 
         return (new TriggerResource($trigger->fresh()))

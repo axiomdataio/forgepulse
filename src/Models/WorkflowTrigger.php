@@ -78,6 +78,7 @@ class WorkflowTrigger extends Model
         'max_executions_period',
         'last_triggered_at',
         'trigger_count',
+        'team_id',
     ];
 
     /**
@@ -107,8 +108,14 @@ class WorkflowTrigger extends Model
     {
         parent::boot();
 
-        // Generate webhook token for webhook triggers
+        // Auto-populate team_id from workflow and generate webhook token
         static::creating(function (WorkflowTrigger $trigger) {
+            // Inherit team_id from workflow for multi-tenancy
+            if ($trigger->team_id === null && $trigger->workflow) {
+                $trigger->team_id = $trigger->workflow->team_id;
+            }
+
+            // Generate webhook token for webhook triggers
             if ($trigger->type === TriggerType::WEBHOOK) {
                 $config = $trigger->configuration?->getArrayCopy() ?? [];
                 if (empty($config['webhook_token'])) {
@@ -149,6 +156,19 @@ class WorkflowTrigger extends Model
     }
 
     /**
+     * Get the team that owns the trigger.
+     *
+     * @return BelongsTo<\Illuminate\Database\Eloquent\Model, $this>
+     */
+    public function team(): BelongsTo
+    {
+        /** @var class-string<\Illuminate\Database\Eloquent\Model> $model */
+        $model = config('forgepulse.teams.model', 'App\\Models\\Team');
+
+        return $this->belongsTo($model);
+    }
+
+    /**
      * Scope a query to only include active triggers.
      *
      * @param  Builder<WorkflowTrigger>  $query
@@ -179,6 +199,46 @@ class WorkflowTrigger extends Model
     public function scopeWithActiveWorkflow(Builder $query): Builder
     {
         return $query->whereHas('workflow', fn ($q) => $q->where('status', 'active'));
+    }
+
+    /**
+     * Scope a query to triggers for a specific team (multi-tenancy).
+     *
+     * @param  Builder<WorkflowTrigger>  $query
+     * @param  int|null  $teamId  Team ID to filter by
+     * @return Builder<WorkflowTrigger>
+     */
+    public function scopeForTeam(Builder $query, ?int $teamId): Builder
+    {
+        if ($teamId === null) {
+            return $query->whereNull('team_id');
+        }
+
+        return $query->where('team_id', $teamId);
+    }
+
+    /**
+     * Get the current tenant/team ID from context.
+     * Override this method to integrate with your tenancy package.
+     */
+    public static function getCurrentTeamId(): ?int
+    {
+        // Integration points for popular tenancy packages:
+        // - Spatie Multitenancy: app('currentTenant')?->id
+        // - Tenancy for Laravel: tenant()?->id
+        // - Laravel Jetstream Teams: auth()->user()?->currentTeam?->id
+        // - Custom: session('team_id') or request header
+
+        // Default: Try common patterns
+        if (function_exists('tenant') && tenant()) {
+            return tenant()->id;
+        }
+
+        if (auth()->check() && method_exists(auth()->user(), 'currentTeam')) {
+            return auth()->user()->currentTeam?->id;
+        }
+
+        return null;
     }
 
     /**
