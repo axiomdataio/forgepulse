@@ -147,4 +147,225 @@ enum TriggerType: string
     {
         return [self::EVENT, self::MODEL];
     }
+
+    /**
+     * Get the context data schema for this trigger type.
+     * Describes what data is available for context_mapping.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function contextSchema(): array
+    {
+        return match ($this) {
+            self::EVENT => [
+                '_description' => 'Data from the Laravel event. Structure depends on your event class.',
+                '_note' => 'Implement toArray() on your event for best results.',
+                '_example_mapping' => [
+                    'user_id' => 'user.id',
+                    'user_email' => 'user.email',
+                    'order_id' => 'order.id',
+                ],
+                'fields' => [
+                    '*' => [
+                        'type' => 'mixed',
+                        'description' => 'All public properties from your event class',
+                        'example' => 'If event has $user property, access via "user" or "user.id"',
+                    ],
+                ],
+            ],
+            self::SCHEDULE => [
+                '_description' => 'Data provided when a scheduled trigger fires.',
+                'fields' => [
+                    'scheduled_at' => [
+                        'type' => 'string',
+                        'description' => 'ISO8601 timestamp when the trigger fired',
+                        'example' => '2024-01-15T09:00:00+00:00',
+                    ],
+                    'cron_expression' => [
+                        'type' => 'string',
+                        'description' => 'The cron expression that triggered this execution',
+                        'example' => '0 9 * * *',
+                    ],
+                    'timezone' => [
+                        'type' => 'string',
+                        'description' => 'Timezone of the schedule',
+                        'example' => 'UTC',
+                    ],
+                ],
+            ],
+            self::WEBHOOK => [
+                '_description' => 'Data from the incoming HTTP request.',
+                '_example_mapping' => [
+                    'event_type' => 'payload.type',
+                    'payment_id' => 'payload.data.object.id',
+                    'amount' => 'payload.data.object.amount',
+                    'source_ip' => 'ip',
+                ],
+                'fields' => [
+                    'payload' => [
+                        'type' => 'object',
+                        'description' => 'The JSON body of the webhook request',
+                        'example' => '{"type": "payment.completed", "data": {...}}',
+                    ],
+                    'headers' => [
+                        'type' => 'object',
+                        'description' => 'HTTP headers (sensitive headers excluded)',
+                        'example' => '{"content-type": ["application/json"]}',
+                    ],
+                    'method' => [
+                        'type' => 'string',
+                        'description' => 'HTTP method',
+                        'example' => 'POST',
+                    ],
+                    'content_type' => [
+                        'type' => 'string',
+                        'description' => 'Content-Type header value',
+                        'example' => 'application/json',
+                    ],
+                    'ip' => [
+                        'type' => 'string',
+                        'description' => 'IP address of the request',
+                        'example' => '192.168.1.1',
+                    ],
+                    'received_at' => [
+                        'type' => 'string',
+                        'description' => 'ISO8601 timestamp when webhook was received',
+                        'example' => '2024-01-15T10:30:00+00:00',
+                    ],
+                ],
+            ],
+            self::MODEL => [
+                '_description' => 'Data from the Eloquent model event.',
+                '_example_mapping' => [
+                    'order_id' => 'model.id',
+                    'customer_id' => 'model.customer_id',
+                    'new_status' => 'model.status',
+                    'old_status' => 'original.status',
+                    'changed_fields' => 'changes',
+                ],
+                'fields' => [
+                    'model' => [
+                        'type' => 'object',
+                        'description' => 'The model as array (current state)',
+                        'example' => '{"id": 1, "status": "shipped", ...}',
+                    ],
+                    'model_class' => [
+                        'type' => 'string',
+                        'description' => 'Fully qualified class name of the model',
+                        'example' => 'App\\Models\\Order',
+                    ],
+                    'model_id' => [
+                        'type' => 'mixed',
+                        'description' => 'Primary key of the model',
+                        'example' => '1',
+                    ],
+                    'event' => [
+                        'type' => 'string',
+                        'description' => 'The model event type',
+                        'example' => 'created | updated | deleted',
+                    ],
+                    'changes' => [
+                        'type' => 'object',
+                        'description' => 'Changed attributes (only for "updated" event)',
+                        'example' => '{"status": "shipped"}',
+                    ],
+                    'original' => [
+                        'type' => 'object',
+                        'description' => 'Original values before update (only for "updated" event)',
+                        'example' => '{"status": "processing"}',
+                    ],
+                    'team_id' => [
+                        'type' => 'integer|null',
+                        'description' => 'Team ID for multi-tenancy (if applicable)',
+                        'example' => '1',
+                    ],
+                ],
+            ],
+            self::MANUAL => [
+                '_description' => 'Data passed when manually executing the workflow.',
+                '_note' => 'Structure is defined by the caller of workflow->execute($context)',
+                'fields' => [
+                    '*' => [
+                        'type' => 'mixed',
+                        'description' => 'Any data passed to the execute() method',
+                        'example' => 'workflow->execute(["user_id" => 1, "action" => "approve"])',
+                    ],
+                ],
+            ],
+        };
+    }
+
+    /**
+     * Get example context data for this trigger type.
+     *
+     * @return array<string, mixed>
+     */
+    public function exampleContextData(): array
+    {
+        return match ($this) {
+            self::EVENT => [
+                'user' => [
+                    'id' => 123,
+                    'email' => 'user@example.com',
+                    'name' => 'John Doe',
+                ],
+                'order' => [
+                    'id' => 456,
+                    'total' => 99.99,
+                ],
+                'timestamp' => '2024-01-15T10:30:00+00:00',
+            ],
+            self::SCHEDULE => [
+                'scheduled_at' => '2024-01-15T09:00:00+00:00',
+                'cron_expression' => '0 9 * * *',
+                'timezone' => 'UTC',
+            ],
+            self::WEBHOOK => [
+                'payload' => [
+                    'type' => 'payment_intent.succeeded',
+                    'data' => [
+                        'object' => [
+                            'id' => 'pi_123456',
+                            'amount' => 5000,
+                            'currency' => 'usd',
+                            'customer' => 'cus_ABC123',
+                        ],
+                    ],
+                ],
+                'headers' => [
+                    'content-type' => ['application/json'],
+                    'user-agent' => ['Stripe/1.0'],
+                ],
+                'method' => 'POST',
+                'content_type' => 'application/json',
+                'ip' => '52.63.170.100',
+                'received_at' => '2024-01-15T10:30:00+00:00',
+            ],
+            self::MODEL => [
+                'model' => [
+                    'id' => 789,
+                    'status' => 'shipped',
+                    'customer_id' => 123,
+                    'total' => 150.00,
+                    'created_at' => '2024-01-10T08:00:00+00:00',
+                    'updated_at' => '2024-01-15T10:30:00+00:00',
+                ],
+                'model_class' => 'App\\Models\\Order',
+                'model_id' => 789,
+                'event' => 'updated',
+                'changes' => [
+                    'status' => 'shipped',
+                ],
+                'original' => [
+                    'status' => 'processing',
+                ],
+                'team_id' => 1,
+            ],
+            self::MANUAL => [
+                'user_id' => 123,
+                'action' => 'approve',
+                'notes' => 'Manual approval by admin',
+            ],
+        };
+    }
 }

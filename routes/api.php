@@ -28,7 +28,9 @@ Route::prefix('api/forgepulse')
 
         // Trigger routes
         Route::get('/triggers/types', [TriggerApiController::class, 'types'])->name('forgepulse.api.triggers.types');
+        Route::get('/triggers/types/{type}/context-schema', [TriggerApiController::class, 'contextSchema'])->name('forgepulse.api.triggers.context-schema');
         Route::post('/triggers/validate-cron', [TriggerApiController::class, 'validateCron'])->name('forgepulse.api.triggers.validate-cron');
+        Route::post('/triggers/preview-mapping', [TriggerApiController::class, 'previewMapping'])->name('forgepulse.api.triggers.preview-mapping');
 
         Route::prefix('/workflows/{workflow}/triggers')->group(function () {
             Route::get('/', [TriggerApiController::class, 'index'])->name('forgepulse.api.triggers.index');

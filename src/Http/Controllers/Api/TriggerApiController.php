@@ -146,11 +146,154 @@ class TriggerApiController extends Controller
             'configuration_schema' => $type->configurationSchema(),
             'default_configuration' => $type->defaultConfiguration(),
             'requires_registration' => $type->requiresRegistration(),
+            'context_schema' => $type->contextSchema(),
+            'example_context_data' => $type->exampleContextData(),
         ]);
 
         return response()->json([
             'data' => $types->values(),
         ]);
+    }
+
+    /**
+     * Get context schema for a specific trigger type.
+     * Helps users understand what data is available for context_mapping.
+     */
+    public function contextSchema(Request $request, string $type): JsonResponse
+    {
+        $triggerType = TriggerType::tryFrom($type);
+
+        if (! $triggerType) {
+            return response()->json([
+                'error' => "Invalid trigger type: {$type}",
+                'valid_types' => array_column(TriggerType::cases(), 'value'),
+            ], 400);
+        }
+
+        return response()->json([
+            'type' => $triggerType->value,
+            'label' => $triggerType->label(),
+            'context_schema' => $triggerType->contextSchema(),
+            'example_data' => $triggerType->exampleContextData(),
+            'example_mapping' => $this->getExampleMapping($triggerType),
+        ]);
+    }
+
+    /**
+     * Preview context mapping for a trigger.
+     * Allows users to test their mapping against example data.
+     */
+    public function previewMapping(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'type' => ['required', 'string'],
+            'context_mapping' => ['required', 'array'],
+            'sample_data' => ['nullable', 'array'],
+        ]);
+
+        $triggerType = TriggerType::tryFrom($validated['type']);
+
+        if (! $triggerType) {
+            return response()->json([
+                'error' => "Invalid trigger type: {$validated['type']}",
+            ], 400);
+        }
+
+        // Use provided sample data or example data
+        $sourceData = $validated['sample_data'] ?? $triggerType->exampleContextData();
+
+        // Apply the mapping
+        $mappedContext = [];
+        foreach ($validated['context_mapping'] as $contextKey => $sourcePath) {
+            $mappedContext[$contextKey] = data_get($sourceData, $sourcePath);
+        }
+
+        return response()->json([
+            'source_data' => $sourceData,
+            'context_mapping' => $validated['context_mapping'],
+            'result' => $mappedContext,
+            'unmapped_fields' => $this->findUnmappedFields($sourceData, $validated['context_mapping']),
+        ]);
+    }
+
+    /**
+     * Get example context mapping for a trigger type.
+     *
+     * @return array<string, string>
+     */
+    protected function getExampleMapping(TriggerType $type): array
+    {
+        return match ($type) {
+            TriggerType::EVENT => [
+                'user_id' => 'user.id',
+                'user_email' => 'user.email',
+                'user_name' => 'user.name',
+            ],
+            TriggerType::SCHEDULE => [
+                'run_time' => 'scheduled_at',
+                'schedule' => 'cron_expression',
+            ],
+            TriggerType::WEBHOOK => [
+                'event_type' => 'payload.type',
+                'payment_id' => 'payload.data.object.id',
+                'amount' => 'payload.data.object.amount',
+                'customer_id' => 'payload.data.object.customer',
+                'source_ip' => 'ip',
+            ],
+            TriggerType::MODEL => [
+                'id' => 'model.id',
+                'status' => 'model.status',
+                'previous_status' => 'original.status',
+                'event_type' => 'event',
+                'changed_attributes' => 'changes',
+            ],
+            TriggerType::MANUAL => [
+                'user_id' => 'user_id',
+                'action' => 'action',
+            ],
+        };
+    }
+
+    /**
+     * Find fields in source data that are not mapped.
+     *
+     * @return array<string>
+     */
+    protected function findUnmappedFields(array $data, array $mapping, string $prefix = ''): array
+    {
+        $unmapped = [];
+        $mappedPaths = array_values($mapping);
+
+        foreach ($data as $key => $value) {
+            $path = $prefix ? "{$prefix}.{$key}" : $key;
+
+            if (is_array($value) && ! $this->isAssociativeArray($value)) {
+                // Skip numeric arrays
+                if (! in_array($path, $mappedPaths)) {
+                    $unmapped[] = $path;
+                }
+            } elseif (is_array($value)) {
+                $unmapped = array_merge($unmapped, $this->findUnmappedFields($value, $mapping, $path));
+            } else {
+                if (! in_array($path, $mappedPaths)) {
+                    $unmapped[] = $path;
+                }
+            }
+        }
+
+        return $unmapped;
+    }
+
+    /**
+     * Check if an array is associative.
+     */
+    protected function isAssociativeArray(array $arr): bool
+    {
+        if (empty($arr)) {
+            return false;
+        }
+
+        return array_keys($arr) !== range(0, count($arr) - 1);
     }
 
     /**
