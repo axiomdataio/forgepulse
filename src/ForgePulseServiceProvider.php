@@ -11,6 +11,11 @@ use AlizHarb\ForgePulse\Livewire\WorkflowTemplateManager;
 use AlizHarb\ForgePulse\Livewire\WorkflowVersionHistory;
 use AlizHarb\ForgePulse\Models\Workflow;
 use AlizHarb\ForgePulse\Policies\WorkflowPolicy;
+use AlizHarb\ForgePulse\Services\Triggers\EventTriggerListener;
+use AlizHarb\ForgePulse\Services\Triggers\ModelTriggerObserver;
+use AlizHarb\ForgePulse\Services\Triggers\ScheduleTriggerRunner;
+use AlizHarb\ForgePulse\Services\Triggers\TriggerManager;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Livewire\Livewire;
@@ -39,6 +44,12 @@ class ForgePulseServiceProvider extends ServiceProvider
         $this->app->singleton(Services\ConditionalEvaluator::class);
         $this->app->singleton(Services\WorkflowValidator::class);
         $this->app->singleton(Services\TemplateManager::class);
+
+        // Register trigger services
+        $this->app->singleton(TriggerManager::class);
+        $this->app->singleton(EventTriggerListener::class);
+        $this->app->singleton(ModelTriggerObserver::class);
+        $this->app->singleton(ScheduleTriggerRunner::class);
     }
 
     /**
@@ -59,7 +70,12 @@ class ForgePulseServiceProvider extends ServiceProvider
         // Register API routes
         $this->registerApiRoutes();
 
-        // Publish package assets
+        // Register trigger system
+        if (config('forgepulse.triggers.enabled', true)) {
+            $this->registerTriggerSystem();
+        }
+
+        // Publish package assets and register commands
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__.'/../config/forgepulse.php' => config_path('forgepulse.php'),
@@ -77,6 +93,13 @@ class ForgePulseServiceProvider extends ServiceProvider
                 __DIR__.'/../resources/js' => public_path('vendor/forgepulse/js'),
                 __DIR__.'/../resources/css' => public_path('vendor/forgepulse/css'),
             ], 'forgepulse-assets');
+
+            // Register console commands
+            $this->commands([
+                Console\Commands\RunScheduledTriggersCommand::class,
+                Console\Commands\RegisterTriggerListenersCommand::class,
+                Console\Commands\ListTriggersCommand::class,
+            ]);
         }
     }
 
@@ -120,5 +143,52 @@ class ForgePulseServiceProvider extends ServiceProvider
         if (config('forgepulse.api.enabled', true)) {
             $this->loadRoutesFrom(__DIR__.'/../routes/api.php');
         }
+    }
+
+    /**
+     * Register the trigger system.
+     */
+    protected function registerTriggerSystem(): void
+    {
+        // Auto-register event listeners
+        if (config('forgepulse.triggers.events.auto_register', true)) {
+            $this->app->booted(function () {
+                try {
+                    $this->app->make(EventTriggerListener::class)
+                        ->registerAllEventTriggers();
+                } catch (\Exception $e) {
+                    // Silently fail if database not available (e.g., during migrations)
+                    if (config('app.debug')) {
+                        logger()->warning('ForgePulse: Could not register event triggers: '.$e->getMessage());
+                    }
+                }
+            });
+        }
+
+        // Auto-observe models
+        if (config('forgepulse.triggers.model.auto_observe', true)) {
+            $this->app->booted(function () {
+                try {
+                    $this->app->make(ModelTriggerObserver::class)
+                        ->registerAllModelTriggers();
+                } catch (\Exception $e) {
+                    // Silently fail if database not available (e.g., during migrations)
+                    if (config('app.debug')) {
+                        logger()->warning('ForgePulse: Could not register model observers: '.$e->getMessage());
+                    }
+                }
+            });
+        }
+
+        // Register scheduled trigger command with Laravel's scheduler
+        $this->app->booted(function () {
+            if ($this->app->bound(Schedule::class)) {
+                $schedule = $this->app->make(Schedule::class);
+                $schedule->command('forgepulse:run-schedules')
+                    ->everyMinute()
+                    ->withoutOverlapping()
+                    ->runInBackground();
+            }
+        });
     }
 }

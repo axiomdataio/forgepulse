@@ -1,6 +1,8 @@
 <?php
 
 use AlizHarb\ForgePulse\Http\Controllers\Api\ExecutionApiController;
+use AlizHarb\ForgePulse\Http\Controllers\Api\TriggerApiController;
+use AlizHarb\ForgePulse\Http\Controllers\Api\WebhookTriggerController;
 use AlizHarb\ForgePulse\Http\Controllers\Api\WorkflowApiController;
 use Illuminate\Support\Facades\Route;
 
@@ -24,9 +26,39 @@ Route::prefix('api/forgepulse')
         Route::put('/workflows/{workflow}', [WorkflowApiController::class, 'update'])->name('forgepulse.api.workflows.update');
         Route::delete('/workflows/{workflow}', [WorkflowApiController::class, 'destroy'])->name('forgepulse.api.workflows.destroy');
 
+        // Trigger routes
+        Route::get('/triggers/types', [TriggerApiController::class, 'types'])->name('forgepulse.api.triggers.types');
+        Route::post('/triggers/validate-cron', [TriggerApiController::class, 'validateCron'])->name('forgepulse.api.triggers.validate-cron');
+
+        Route::prefix('/workflows/{workflow}/triggers')->group(function () {
+            Route::get('/', [TriggerApiController::class, 'index'])->name('forgepulse.api.triggers.index');
+            Route::post('/', [TriggerApiController::class, 'store'])->name('forgepulse.api.triggers.store');
+            Route::get('/{trigger}', [TriggerApiController::class, 'show'])->name('forgepulse.api.triggers.show');
+            Route::put('/{trigger}', [TriggerApiController::class, 'update'])->name('forgepulse.api.triggers.update');
+            Route::delete('/{trigger}', [TriggerApiController::class, 'destroy'])->name('forgepulse.api.triggers.destroy');
+            Route::post('/{trigger}/toggle', [TriggerApiController::class, 'toggle'])->name('forgepulse.api.triggers.toggle');
+        });
+
         // Execution routes
         Route::get('/executions', [ExecutionApiController::class, 'index'])->name('forgepulse.api.executions.index');
         Route::get('/executions/{execution}', [ExecutionApiController::class, 'show'])->name('forgepulse.api.executions.show');
         Route::post('/executions/{execution}/pause', [ExecutionApiController::class, 'pause'])->name('forgepulse.api.executions.pause');
         Route::post('/executions/{execution}/resume', [ExecutionApiController::class, 'resume'])->name('forgepulse.api.executions.resume');
+    });
+
+/*
+|--------------------------------------------------------------------------
+| Webhook Trigger Endpoint
+|--------------------------------------------------------------------------
+|
+| This endpoint receives incoming webhook requests to trigger workflows.
+| It uses token-based authentication and does not require session auth.
+|
+*/
+
+Route::prefix('api/forgepulse')
+    ->middleware(['api'])
+    ->group(function () {
+        Route::post('/webhook/{token}', [WebhookTriggerController::class, 'handle'])
+            ->name('forgepulse.api.webhook.trigger');
     });

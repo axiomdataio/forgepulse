@@ -280,4 +280,58 @@ return [
         // API rate limiting
         'rate_limit' => env('FORGEPULSE_API_RATE_LIMIT', '60,1'),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Trigger Settings
+    |--------------------------------------------------------------------------
+    |
+    | Configure the workflow trigger system for automatic workflow initiation.
+    | Supports event, schedule, webhook, model, and manual trigger types.
+    |
+    */
+
+    'triggers' => [
+        // Enable the trigger system
+        'enabled' => env('FORGEPULSE_TRIGGERS_ENABLED', true),
+
+        // Event triggers
+        'events' => [
+            // Auto-register event listeners on application boot
+            'auto_register' => env('FORGEPULSE_AUTO_REGISTER_EVENTS', true),
+        ],
+
+        // Schedule triggers
+        'schedule' => [
+            // Use atomic locks to prevent duplicate executions
+            'use_locks' => env('FORGEPULSE_SCHEDULE_LOCKS', true),
+
+            // Lock TTL in seconds
+            'lock_ttl' => env('FORGEPULSE_SCHEDULE_LOCK_TTL', 60),
+        ],
+
+        // Webhook triggers
+        'webhook' => [
+            // Rate limiting for webhooks (requests per minute)
+            'rate_limit' => env('FORGEPULSE_WEBHOOK_RATE_LIMIT', 60),
+
+            // Webhook token length
+            'token_length' => 64,
+        ],
+
+        // Model triggers
+        'model' => [
+            // Auto-register model observers on application boot
+            'auto_observe' => env('FORGEPULSE_AUTO_OBSERVE_MODELS', true),
+        ],
+
+        // Serverless optimisations (Laravel Vapor, AWS Lambda, etc.)
+        'serverless' => [
+            // Use caching for trigger configuration
+            'cache_enabled' => env('FORGEPULSE_TRIGGER_CACHE', true),
+
+            // Cache TTL in seconds
+            'cache_ttl' => env('FORGEPULSE_TRIGGER_CACHE_TTL', 300),
+        ],
+    ],
 ];
