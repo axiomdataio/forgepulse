@@ -324,6 +324,494 @@ class TriggerApiController extends Controller
     }
 
     /**
+     * Introspect a class to discover its properties for context mapping.
+     * Works with Event classes, Model classes, or any PHP class.
+     */
+    public function introspectClass(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'class' => ['required', 'string'],
+            'type' => ['nullable', 'string', 'in:event,model'],
+        ]);
+
+        $className = $validated['class'];
+        $type = $validated['type'] ?? 'event';
+
+        if (! class_exists($className)) {
+            return response()->json([
+                'error' => "Class not found: {$className}",
+                'suggestion' => 'Ensure the fully qualified class name is correct (e.g., App\\Events\\OrderPlaced)',
+            ], 404);
+        }
+
+        try {
+            $reflection = new \ReflectionClass($className);
+            $result = [
+                'class' => $className,
+                'type' => $type,
+                'properties' => $this->getClassProperties($reflection),
+                'methods' => $this->getRelevantMethods($reflection),
+                'context_paths' => [],
+                'example_mapping' => [],
+            ];
+
+            // Build context paths based on type
+            if ($type === 'model') {
+                $result['context_paths'] = $this->buildModelContextPaths($className, $reflection);
+                $result['available_paths'] = $this->getModelAvailablePaths($className);
+            } else {
+                $result['context_paths'] = $this->buildEventContextPaths($reflection);
+            }
+
+            // Generate example mapping
+            $result['example_mapping'] = $this->generateExampleMapping($result['context_paths']);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Failed to introspect class',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get public properties from a class.
+     *
+     * @return array<array{name: string, type: string|null, description: string}>
+     */
+    protected function getClassProperties(\ReflectionClass $reflection): array
+    {
+        $properties = [];
+
+        foreach ($reflection->getProperties(\ReflectionProperty::IS_PUBLIC) as $property) {
+            $type = $property->getType();
+            $typeName = $type ? $this->getTypeName($type) : 'mixed';
+
+            $properties[] = [
+                'name' => $property->getName(),
+                'type' => $typeName,
+                'path' => $property->getName(),
+                'nullable' => $type?->allowsNull() ?? true,
+                'description' => $this->getPropertyDescription($property),
+            ];
+        }
+
+        // Also check constructor parameters (for promoted properties)
+        $constructor = $reflection->getConstructor();
+        if ($constructor) {
+            foreach ($constructor->getParameters() as $param) {
+                // Skip if already found as property
+                if (collect($properties)->contains('name', $param->getName())) {
+                    continue;
+                }
+
+                // Check if it's a promoted property
+                if ($param->isPromoted()) {
+                    $type = $param->getType();
+                    $typeName = $type ? $this->getTypeName($type) : 'mixed';
+
+                    $properties[] = [
+                        'name' => $param->getName(),
+                        'type' => $typeName,
+                        'path' => $param->getName(),
+                        'nullable' => $type?->allowsNull() ?? true,
+                        'description' => "Constructor parameter (promoted property)",
+                    ];
+                }
+            }
+        }
+
+        return $properties;
+    }
+
+    /**
+     * Get relevant methods for context (toArray, broadcastWith, etc).
+     *
+     * @return array<array{name: string, returns: string|null}>
+     */
+    protected function getRelevantMethods(\ReflectionClass $reflection): array
+    {
+        $relevantMethods = ['toArray', 'broadcastWith', 'jsonSerialize', 'getAttributes'];
+        $methods = [];
+
+        foreach ($relevantMethods as $methodName) {
+            if ($reflection->hasMethod($methodName)) {
+                $method = $reflection->getMethod($methodName);
+                $returnType = $method->getReturnType();
+
+                $methods[] = [
+                    'name' => $methodName,
+                    'returns' => $returnType ? $this->getTypeName($returnType) : 'mixed',
+                    'note' => $this->getMethodNote($methodName),
+                ];
+            }
+        }
+
+        return $methods;
+    }
+
+    /**
+     * Build context paths for an event class.
+     *
+     * @return array<array{path: string, type: string, description: string, nested_paths?: array}>
+     */
+    protected function buildEventContextPaths(\ReflectionClass $reflection): array
+    {
+        $paths = [];
+
+        foreach ($reflection->getProperties(\ReflectionProperty::IS_PUBLIC) as $property) {
+            $type = $property->getType();
+            $typeName = $type ? $this->getTypeName($type) : 'mixed';
+            $propertyName = $property->getName();
+
+            $pathInfo = [
+                'path' => $propertyName,
+                'type' => $typeName,
+                'description' => "Access via \"{$propertyName}\"",
+            ];
+
+            // If it's a class type, try to get nested properties
+            if ($type instanceof \ReflectionNamedType && ! $type->isBuiltin()) {
+                $nestedClass = $type->getName();
+                if (class_exists($nestedClass)) {
+                    $pathInfo['nested_paths'] = $this->getNestedPaths($nestedClass, $propertyName);
+                }
+            }
+
+            $paths[] = $pathInfo;
+        }
+
+        // Check constructor for promoted properties
+        $constructor = $reflection->getConstructor();
+        if ($constructor) {
+            foreach ($constructor->getParameters() as $param) {
+                if (! $param->isPromoted()) {
+                    continue;
+                }
+
+                $existingPaths = collect($paths)->pluck('path')->toArray();
+                if (in_array($param->getName(), $existingPaths)) {
+                    continue;
+                }
+
+                $type = $param->getType();
+                $typeName = $type ? $this->getTypeName($type) : 'mixed';
+                $paramName = $param->getName();
+
+                $pathInfo = [
+                    'path' => $paramName,
+                    'type' => $typeName,
+                    'description' => "Access via \"{$paramName}\"",
+                ];
+
+                if ($type instanceof \ReflectionNamedType && ! $type->isBuiltin()) {
+                    $nestedClass = $type->getName();
+                    if (class_exists($nestedClass)) {
+                        $pathInfo['nested_paths'] = $this->getNestedPaths($nestedClass, $paramName);
+                    }
+                }
+
+                $paths[] = $pathInfo;
+            }
+        }
+
+        return $paths;
+    }
+
+    /**
+     * Get nested paths for a class (e.g., user.id, user.email).
+     *
+     * @return array<array{path: string, type: string}>
+     */
+    protected function getNestedPaths(string $className, string $prefix, int $depth = 0): array
+    {
+        if ($depth > 2) {
+            return []; // Prevent infinite recursion
+        }
+
+        $paths = [];
+
+        try {
+            $reflection = new \ReflectionClass($className);
+
+            // Check if it's an Eloquent model
+            if ($reflection->isSubclassOf(\Illuminate\Database\Eloquent\Model::class)) {
+                return $this->getModelNestedPaths($className, $prefix);
+            }
+
+            foreach ($reflection->getProperties(\ReflectionProperty::IS_PUBLIC) as $property) {
+                $type = $property->getType();
+                $typeName = $type ? $this->getTypeName($type) : 'mixed';
+
+                $paths[] = [
+                    'path' => "{$prefix}.{$property->getName()}",
+                    'type' => $typeName,
+                ];
+            }
+        } catch (\Exception) {
+            // Ignore reflection errors
+        }
+
+        return $paths;
+    }
+
+    /**
+     * Get nested paths for an Eloquent model.
+     *
+     * @return array<array{path: string, type: string}>
+     */
+    protected function getModelNestedPaths(string $className, string $prefix): array
+    {
+        $paths = [];
+
+        try {
+            // Try to get fillable/visible attributes from the model
+            $reflection = new \ReflectionClass($className);
+
+            // Get fillable property if it exists
+            if ($reflection->hasProperty('fillable')) {
+                $fillableProperty = $reflection->getProperty('fillable');
+                $fillableProperty->setAccessible(true);
+
+                // Create instance to get default value
+                $instance = $reflection->newInstanceWithoutConstructor();
+                $fillable = $fillableProperty->getValue($instance);
+
+                foreach ($fillable as $attribute) {
+                    $paths[] = [
+                        'path' => "{$prefix}.{$attribute}",
+                        'type' => 'mixed',
+                        'source' => 'fillable',
+                    ];
+                }
+            }
+
+            // Add common model attributes
+            $commonAttributes = ['id', 'created_at', 'updated_at'];
+            foreach ($commonAttributes as $attr) {
+                if (! collect($paths)->contains('path', "{$prefix}.{$attr}")) {
+                    $paths[] = [
+                        'path' => "{$prefix}.{$attr}",
+                        'type' => $attr === 'id' ? 'int' : 'datetime',
+                        'source' => 'common',
+                    ];
+                }
+            }
+        } catch (\Exception) {
+            // Return basic paths if reflection fails
+            $paths = [
+                ['path' => "{$prefix}.id", 'type' => 'int'],
+                ['path' => "{$prefix}.*", 'type' => 'mixed', 'note' => 'All model attributes'],
+            ];
+        }
+
+        return $paths;
+    }
+
+    /**
+     * Build context paths for a model trigger.
+     *
+     * @return array<array{path: string, type: string, description: string}>
+     */
+    protected function buildModelContextPaths(string $className, \ReflectionClass $reflection): array
+    {
+        $paths = [
+            [
+                'path' => 'model',
+                'type' => 'object',
+                'description' => 'The model as array (all attributes)',
+            ],
+            [
+                'path' => 'model_class',
+                'type' => 'string',
+                'description' => 'Fully qualified class name',
+                'example' => $className,
+            ],
+            [
+                'path' => 'model_id',
+                'type' => 'mixed',
+                'description' => 'Primary key value',
+            ],
+            [
+                'path' => 'event',
+                'type' => 'string',
+                'description' => 'Event type: created, updated, or deleted',
+            ],
+            [
+                'path' => 'changes',
+                'type' => 'object',
+                'description' => 'Changed attributes (updated event only)',
+            ],
+            [
+                'path' => 'original',
+                'type' => 'object',
+                'description' => 'Original values (updated event only)',
+            ],
+        ];
+
+        // Add model-specific paths
+        $modelPaths = $this->getModelNestedPaths($className, 'model');
+        foreach ($modelPaths as $modelPath) {
+            $paths[] = array_merge($modelPath, [
+                'description' => "Model attribute",
+            ]);
+        }
+
+        return $paths;
+    }
+
+    /**
+     * Get available paths for a model by examining its structure.
+     *
+     * @return array<string, mixed>
+     */
+    protected function getModelAvailablePaths(string $className): array
+    {
+        $result = [
+            'fillable' => [],
+            'casts' => [],
+            'dates' => [],
+            'relationships' => [],
+        ];
+
+        try {
+            $reflection = new \ReflectionClass($className);
+            $instance = $reflection->newInstanceWithoutConstructor();
+
+            // Get fillable
+            if ($reflection->hasProperty('fillable')) {
+                $prop = $reflection->getProperty('fillable');
+                $prop->setAccessible(true);
+                $result['fillable'] = $prop->getValue($instance);
+            }
+
+            // Get casts
+            if ($reflection->hasMethod('getCasts')) {
+                try {
+                    $result['casts'] = $instance->getCasts();
+                } catch (\Exception) {
+                    // Ignore
+                }
+            }
+
+            // Find relationship methods
+            foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+                if ($method->getNumberOfParameters() > 0) {
+                    continue;
+                }
+
+                $returnType = $method->getReturnType();
+                if ($returnType instanceof \ReflectionNamedType) {
+                    $typeName = $returnType->getName();
+                    if (str_contains($typeName, 'Relation') || 
+                        in_array($typeName, ['HasMany', 'HasOne', 'BelongsTo', 'BelongsToMany'])) {
+                        $result['relationships'][] = $method->getName();
+                    }
+                }
+            }
+        } catch (\Exception) {
+            // Ignore
+        }
+
+        return $result;
+    }
+
+    /**
+     * Generate example context mapping from paths.
+     *
+     * @param  array  $paths
+     * @return array<string, string>
+     */
+    protected function generateExampleMapping(array $paths): array
+    {
+        $mapping = [];
+
+        foreach ($paths as $pathInfo) {
+            $path = $pathInfo['path'];
+
+            // Skip wildcard paths
+            if (str_contains($path, '*')) {
+                continue;
+            }
+
+            // Create a sensible context key
+            $key = str_replace('.', '_', $path);
+
+            // Limit to first 5 paths
+            if (count($mapping) >= 5) {
+                break;
+            }
+
+            $mapping[$key] = $path;
+
+            // Also add nested paths if available
+            if (isset($pathInfo['nested_paths'])) {
+                foreach (array_slice($pathInfo['nested_paths'], 0, 3) as $nested) {
+                    $nestedKey = str_replace('.', '_', $nested['path']);
+                    $mapping[$nestedKey] = $nested['path'];
+
+                    if (count($mapping) >= 8) {
+                        break 2;
+                    }
+                }
+            }
+        }
+
+        return $mapping;
+    }
+
+    /**
+     * Get the string representation of a reflection type.
+     */
+    protected function getTypeName(\ReflectionType $type): string
+    {
+        if ($type instanceof \ReflectionNamedType) {
+            return $type->getName();
+        }
+
+        if ($type instanceof \ReflectionUnionType) {
+            return implode('|', array_map(
+                fn ($t) => $t instanceof \ReflectionNamedType ? $t->getName() : 'mixed',
+                $type->getTypes()
+            ));
+        }
+
+        return 'mixed';
+    }
+
+    /**
+     * Get description for a property from docblock.
+     */
+    protected function getPropertyDescription(\ReflectionProperty $property): string
+    {
+        $docComment = $property->getDocComment();
+
+        if ($docComment) {
+            // Try to extract @var description
+            if (preg_match('/@var\s+\S+\s+(.+)$/m', $docComment, $matches)) {
+                return trim($matches[1]);
+            }
+        }
+
+        return "Public property";
+    }
+
+    /**
+     * Get note for a method.
+     */
+    protected function getMethodNote(string $methodName): string
+    {
+        return match ($methodName) {
+            'toArray' => 'If implemented, trigger will use this for context data',
+            'broadcastWith' => 'Fallback if toArray is not available',
+            'jsonSerialize' => 'Used for JSON serialization',
+            'getAttributes' => 'Eloquent model attributes',
+            default => '',
+        };
+    }
+
+    /**
      * Validate trigger request data.
      *
      * @return array<string, mixed>
